@@ -123,7 +123,7 @@ std::optional<Length> ValueParser::parse_length(const String& value) {
         num_end = 1;
     }
 
-    while (num_end < trimmed.length()) {
+    while (num_end < trimmed.size()) {
         char c = static_cast<char>(trimmed[num_end]);
         if (std::isdigit(c)) {
             num_end++;
@@ -220,23 +220,23 @@ std::optional<Color> ValueParser::parse_color(const String& value) {
     // Hex color
     if (trimmed.starts_with("#"_s)) {
         String hex = trimmed.substring(1);
-        if (hex.length() == 3) {
+        if (hex.size() == 3) {
             // #RGB -> #RRGGBB
             u8 r = static_cast<u8>(std::strtoul(String(1, static_cast<char>(hex[0])).c_str(), nullptr, 16) * 17);
             u8 g = static_cast<u8>(std::strtoul(String(1, static_cast<char>(hex[1])).c_str(), nullptr, 16) * 17);
             u8 b = static_cast<u8>(std::strtoul(String(1, static_cast<char>(hex[2])).c_str(), nullptr, 16) * 17);
             return Color{r, g, b};
-        } else if (hex.length() == 4) {
+        } else if (hex.size() == 4) {
             // #RGBA
             u8 r = static_cast<u8>(std::strtoul(String(1, static_cast<char>(hex[0])).c_str(), nullptr, 16) * 17);
             u8 g = static_cast<u8>(std::strtoul(String(1, static_cast<char>(hex[1])).c_str(), nullptr, 16) * 17);
             u8 b = static_cast<u8>(std::strtoul(String(1, static_cast<char>(hex[2])).c_str(), nullptr, 16) * 17);
             u8 a = static_cast<u8>(std::strtoul(String(1, static_cast<char>(hex[3])).c_str(), nullptr, 16) * 17);
             return Color{r, g, b, a};
-        } else if (hex.length() == 6) {
+        } else if (hex.size() == 6) {
             u32 rgb = static_cast<u32>(std::strtoul(hex.c_str(), nullptr, 16));
             return Color::from_rgb(rgb);
-        } else if (hex.length() == 8) {
+        } else if (hex.size() == 8) {
             u32 rgba = static_cast<u32>(std::strtoul(hex.c_str(), nullptr, 16));
             return Color::from_rgba(rgba);
         }
@@ -245,25 +245,27 @@ std::optional<Color> ValueParser::parse_color(const String& value) {
 
     // rgb() / rgba()
     if (trimmed.starts_with("rgb("_s) || trimmed.starts_with("rgba("_s)) {
-        usize start = trimmed.find('(');
-        usize end = trimmed.find(')');
-        if (start == String::npos || end == String::npos) return std::nullopt;
+        auto start_opt = trimmed.find('(');
+        auto end_opt = trimmed.find(')');
+        if (!start_opt.has_value() || !end_opt.has_value()) return std::nullopt;
 
+        usize start = start_opt.value();
+        usize end = end_opt.value();
         String args = trimmed.substring(start + 1, end - start - 1);
         std::vector<f64> values;
 
         usize pos = 0;
-        while (pos < args.length()) {
+        while (pos < args.size()) {
             // Skip whitespace and separators
-            while (pos < args.length() &&
+            while (pos < args.size() &&
                    (args[pos] == ' ' || args[pos] == ',' || args[pos] == '/')) {
                 pos++;
             }
-            if (pos >= args.length()) break;
+            if (pos >= args.size()) break;
 
             // Parse number
             usize num_start = pos;
-            while (pos < args.length() &&
+            while (pos < args.size() &&
                    (std::isdigit(args[pos]) || args[pos] == '.' || args[pos] == '-' || args[pos] == '%')) {
                 pos++;
             }
@@ -271,7 +273,7 @@ std::optional<Color> ValueParser::parse_color(const String& value) {
             String num_str = args.substring(num_start, pos - num_start);
             bool is_percent = num_str.ends_with("%"_s);
             if (is_percent) {
-                num_str = num_str.substring(0, num_str.length() - 1);
+                num_str = num_str.substring(0, num_str.size() - 1);
             }
 
             f64 val = std::strtod(num_str.c_str(), nullptr);

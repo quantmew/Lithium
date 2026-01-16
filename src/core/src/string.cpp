@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstring>
+#include <cstdio>
 
 namespace lithium {
 
@@ -398,8 +399,11 @@ StringBuilder& StringBuilder::append(u64 value) {
 
 StringBuilder& StringBuilder::append(f64 value) {
     char buffer[64];
-    auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
-    m_buffer.append(buffer, static_cast<usize>(result.ptr - buffer));
+    // Use snprintf for floating point since std::to_chars for float requires GCC 11+
+    int len = std::snprintf(buffer, sizeof(buffer), "%g", value);
+    if (len > 0 && static_cast<size_t>(len) < sizeof(buffer)) {
+        m_buffer.append(buffer, static_cast<usize>(len));
+    }
     return *this;
 }
 

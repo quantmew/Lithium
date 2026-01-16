@@ -14,7 +14,7 @@ namespace lithium::html {
 // Special elements list
 // ============================================================================
 
-static constexpr std::array<const char*, 68> SPECIAL_ELEMENTS = {
+static constexpr std::array<const char*, 82> SPECIAL_ELEMENTS = {
     "address", "applet", "area", "article", "aside", "base", "basefont",
     "bgsound", "blockquote", "body", "br", "button", "caption", "center",
     "col", "colgroup", "dd", "details", "dir", "div", "dl", "dt", "embed",
@@ -33,7 +33,7 @@ static constexpr std::array<const char*, 14> FORMATTING_ELEMENTS = {
     "strike", "strong", "tt", "u"
 };
 
-static constexpr std::array<const char*, 12> IMPLIED_END_TAG_ELEMENTS = {
+static constexpr std::array<const char*, 10> IMPLIED_END_TAG_ELEMENTS = {
     "dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"
 };
 

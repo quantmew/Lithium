@@ -8,6 +8,13 @@
 
 namespace lithium::css {
 
+// Helper to convert number to string
+static String number_to_string(f64 value) {
+    StringBuilder sb;
+    sb.append(value);
+    return sb.build();
+}
+
 // ============================================================================
 // Stylesheet
 // ============================================================================
@@ -15,8 +22,8 @@ namespace lithium::css {
 std::vector<const StyleRule*> Stylesheet::style_rules() const {
     std::vector<const StyleRule*> result;
     for (const auto& rule : rules) {
-        if (auto* style_rule = std::get_if<StyleRule>(&rule)) {
-            result.push_back(style_rule);
+        if (rule.is<StyleRule>()) {
+            result.push_back(&rule.get<StyleRule>());
         }
     }
     return result;
@@ -25,9 +32,10 @@ std::vector<const StyleRule*> Stylesheet::style_rules() const {
 std::vector<const AtRule*> Stylesheet::import_rules() const {
     std::vector<const AtRule*> result;
     for (const auto& rule : rules) {
-        if (auto* at_rule = std::get_if<AtRule>(&rule)) {
-            if (at_rule->name.to_lowercase() == "import"_s) {
-                result.push_back(at_rule);
+        if (rule.is<AtRule>()) {
+            const auto& at_rule = rule.get<AtRule>();
+            if (at_rule.name.to_lowercase() == "import"_s) {
+                result.push_back(&at_rule);
             }
         }
     }
@@ -37,9 +45,10 @@ std::vector<const AtRule*> Stylesheet::import_rules() const {
 std::vector<const AtRule*> Stylesheet::media_rules() const {
     std::vector<const AtRule*> result;
     for (const auto& rule : rules) {
-        if (auto* at_rule = std::get_if<AtRule>(&rule)) {
-            if (at_rule->name.to_lowercase() == "media"_s) {
-                result.push_back(at_rule);
+        if (rule.is<AtRule>()) {
+            const auto& at_rule = rule.get<AtRule>();
+            if (at_rule.name.to_lowercase() == "media"_s) {
+                result.push_back(&at_rule);
             }
         }
     }
@@ -218,7 +227,7 @@ std::optional<AtRule> Parser::consume_at_rule() {
         if (std::holds_alternative<OpenCurlyToken>(token)) {
             // Consume block
             consume_token();
-            rule.block = std::vector<std::shared_ptr<struct Rule>>();
+            rule.block = std::vector<std::shared_ptr<RuleVariant>>();
             int depth = 1;
             while (!at_end() && depth > 0) {
                 if (std::holds_alternative<OpenCurlyToken>(current_token())) {
@@ -256,7 +265,7 @@ std::optional<StyleRule> Parser::consume_qualified_rule() {
         if (std::holds_alternative<OpenCurlyToken>(token)) {
             // Parse selector
             SelectorParser parser;
-            if (auto selectors = parser.parse(selector_text.to_string())) {
+            if (auto selectors = parser.parse(selector_text.build())) {
                 rule.selectors = *selectors;
             } else {
                 parse_error("Invalid selector: "_s + parser.error());
@@ -293,7 +302,7 @@ std::optional<StyleRule> Parser::consume_qualified_rule() {
             selector_text.append(string_tok->value);
             selector_text.append('"');
         } else if (auto* num = std::get_if<NumberToken>(&token)) {
-            selector_text.append(String::from_number(num->value));
+            selector_text.append(num->value);  // StringBuilder::append(f64)
         } else if (std::holds_alternative<CommaToken>(token)) {
             selector_text.append(',');
         }
@@ -443,11 +452,11 @@ ComponentValue Parser::consume_component_value() {
     } else if (auto* string_tok = std::get_if<StringToken>(&token)) {
         preserved.value = string_tok->value;
     } else if (auto* num = std::get_if<NumberToken>(&token)) {
-        preserved.value = String::from_number(num->value);
+        preserved.value = number_to_string(num->value);
     } else if (auto* dim = std::get_if<DimensionToken>(&token)) {
-        preserved.value = String::from_number(dim->value) + dim->unit;
+        preserved.value = number_to_string(dim->value) + dim->unit;
     } else if (auto* pct = std::get_if<PercentageToken>(&token)) {
-        preserved.value = String::from_number(pct->value) + "%"_s;
+        preserved.value = number_to_string(pct->value) + "%"_s;
     } else if (auto* hash = std::get_if<HashToken>(&token)) {
         preserved.value = "#"_s + hash->value;
     } else if (auto* delim = std::get_if<DelimToken>(&token)) {

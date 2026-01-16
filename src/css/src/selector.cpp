@@ -360,7 +360,7 @@ std::optional<AttributeSelector> SelectorParser::parse_attribute_selector() {
             value.append(consume());
         }
         if (!at_end()) consume(); // closing quote
-        sel.value = value.to_string();
+        sel.value = value.build();
     } else {
         sel.value = consume_ident();
     }
@@ -405,7 +405,7 @@ std::optional<PseudoClassSelector> SelectorParser::parse_pseudo_class() {
             }
         }
         if (!at_end()) consume(); // )
-        sel.argument = arg.to_string();
+        sel.argument = arg.build();
     }
 
     return sel;
@@ -430,16 +430,16 @@ void SelectorParser::skip_whitespace() {
 }
 
 bool SelectorParser::at_end() const {
-    return m_position >= m_input.length();
+    return m_position >= m_input.size();
 }
 
 unicode::CodePoint SelectorParser::peek(usize offset) const {
-    if (m_position + offset >= m_input.length()) return 0;
+    if (m_position + offset >= m_input.size()) return 0;
     return m_input[m_position + offset];
 }
 
 unicode::CodePoint SelectorParser::consume() {
-    if (m_position >= m_input.length()) return 0;
+    if (m_position >= m_input.size()) return 0;
     return m_input[m_position++];
 }
 
@@ -462,7 +462,7 @@ String SelectorParser::consume_ident() {
     // First char must be letter, underscore, or non-ASCII
     unicode::CodePoint cp = peek();
     if (!std::isalpha(cp) && cp != '_' && cp <= 0x7F) {
-        if (result.length() > 0) {
+        if (result.size() > 0) {
             // Just a dash, not valid
             m_position--;
             return String();
@@ -485,7 +485,7 @@ String SelectorParser::consume_ident() {
         }
     }
 
-    return result.to_string();
+    return result.build();
 }
 
 // ============================================================================
@@ -624,8 +624,8 @@ bool SelectorMatcher::matches(const SimpleSelector& selector, const dom::Element
                 case AttributeSelector::Matcher::Includes: {
                     // Space-separated list contains value
                     usize start = 0;
-                    for (usize i = 0; i <= value.length(); ++i) {
-                        if (i == value.length() || value[i] == ' ') {
+                    for (usize i = 0; i <= value.size(); ++i) {
+                        if (i == value.size() || value[i] == ' ') {
                             if (i > start && value.substring(start, i - start) == match_value) {
                                 return true;
                             }
@@ -637,14 +637,14 @@ bool SelectorMatcher::matches(const SimpleSelector& selector, const dom::Element
                 case AttributeSelector::Matcher::DashMatch:
                     return value == match_value ||
                            (value.starts_with(match_value) &&
-                            value.length() > match_value.length() &&
-                            value[match_value.length()] == '-');
+                            value.size() > match_value.size() &&
+                            value[match_value.size()] == '-');
                 case AttributeSelector::Matcher::Prefix:
                     return value.starts_with(match_value);
                 case AttributeSelector::Matcher::Suffix:
                     return value.ends_with(match_value);
                 case AttributeSelector::Matcher::Substring:
-                    return value.find(match_value) != String::npos;
+                    return value.find(match_value).has_value();
             }
             return false;
         } else if constexpr (std::is_same_v<T, PseudoClassSelector>) {

@@ -4,9 +4,10 @@
 #include "string.hpp"
 #include <string_view>
 #include <functional>
-#include <source_location>
 #include <chrono>
-#include <format>
+#include <sstream>
+#include <vector>
+#include <memory>
 
 namespace lithium {
 
@@ -38,6 +39,26 @@ enum class LogLevel : u8 {
 }
 
 // ============================================================================
+// Source location (GCC 9 compatible)
+// ============================================================================
+
+struct SourceLocation {
+    const char* file;
+    int line;
+    const char* function;
+
+    static SourceLocation current(const char* file = __builtin_FILE(),
+                                   int line = __builtin_LINE(),
+                                   const char* func = __builtin_FUNCTION()) {
+        return {file, line, func};
+    }
+
+    [[nodiscard]] const char* file_name() const { return file; }
+    [[nodiscard]] int line_number() const { return line; }
+    [[nodiscard]] const char* function_name() const { return function; }
+};
+
+// ============================================================================
 // Log record
 // ============================================================================
 
@@ -45,7 +66,7 @@ struct LogRecord {
     LogLevel level;
     std::string_view message;
     std::string_view logger_name;
-    std::source_location location;
+    SourceLocation location;
     std::chrono::system_clock::time_point timestamp;
 };
 
@@ -63,7 +84,7 @@ public:
 // Console sink (writes to stdout/stderr)
 class ConsoleSink : public LogSink {
 public:
-    ConsoleSink(bool use_colors = true);
+    explicit ConsoleSink(bool use_colors = true);
     void write(const LogRecord& record) override;
     void flush() override;
 
@@ -92,50 +113,13 @@ class Logger {
 public:
     explicit Logger(std::string_view name);
 
-    // Log methods
-    template<typename... Args>
-    void trace(std::format_string<Args...> fmt, Args&&... args,
-               std::source_location loc = std::source_location::current()) {
-        log(LogLevel::Trace, fmt, std::forward<Args>(args)..., loc);
-    }
-
-    template<typename... Args>
-    void debug(std::format_string<Args...> fmt, Args&&... args,
-               std::source_location loc = std::source_location::current()) {
-        log(LogLevel::Debug, fmt, std::forward<Args>(args)..., loc);
-    }
-
-    template<typename... Args>
-    void info(std::format_string<Args...> fmt, Args&&... args,
-              std::source_location loc = std::source_location::current()) {
-        log(LogLevel::Info, fmt, std::forward<Args>(args)..., loc);
-    }
-
-    template<typename... Args>
-    void warn(std::format_string<Args...> fmt, Args&&... args,
-              std::source_location loc = std::source_location::current()) {
-        log(LogLevel::Warn, fmt, std::forward<Args>(args)..., loc);
-    }
-
-    template<typename... Args>
-    void error(std::format_string<Args...> fmt, Args&&... args,
-               std::source_location loc = std::source_location::current()) {
-        log(LogLevel::Error, fmt, std::forward<Args>(args)..., loc);
-    }
-
-    template<typename... Args>
-    void fatal(std::format_string<Args...> fmt, Args&&... args,
-               std::source_location loc = std::source_location::current()) {
-        log(LogLevel::Fatal, fmt, std::forward<Args>(args)..., loc);
-    }
-
     // Simple string logging
-    void trace(std::string_view msg, std::source_location loc = std::source_location::current());
-    void debug(std::string_view msg, std::source_location loc = std::source_location::current());
-    void info(std::string_view msg, std::source_location loc = std::source_location::current());
-    void warn(std::string_view msg, std::source_location loc = std::source_location::current());
-    void error(std::string_view msg, std::source_location loc = std::source_location::current());
-    void fatal(std::string_view msg, std::source_location loc = std::source_location::current());
+    void trace(std::string_view msg, SourceLocation loc = SourceLocation::current());
+    void debug(std::string_view msg, SourceLocation loc = SourceLocation::current());
+    void info(std::string_view msg, SourceLocation loc = SourceLocation::current());
+    void warn(std::string_view msg, SourceLocation loc = SourceLocation::current());
+    void error(std::string_view msg, SourceLocation loc = SourceLocation::current());
+    void fatal(std::string_view msg, SourceLocation loc = SourceLocation::current());
 
     // Configuration
     void set_level(LogLevel level) { m_level = level; }
@@ -147,15 +131,7 @@ public:
     }
 
 private:
-    template<typename... Args>
-    void log(LogLevel level, std::format_string<Args...> fmt, Args&&... args,
-             std::source_location loc) {
-        if (!is_enabled(level)) return;
-        std::string message = std::format(fmt, std::forward<Args>(args)...);
-        log_impl(level, message, loc);
-    }
-
-    void log_impl(LogLevel level, std::string_view message, std::source_location loc);
+    void log_impl(LogLevel level, std::string_view message, SourceLocation loc);
 
     std::string m_name;
     LogLevel m_level{LogLevel::Info};
@@ -200,25 +176,25 @@ void flush();
 // Convenience macros
 // ============================================================================
 
-#define LITHIUM_LOG_TRACE(...) ::lithium::logging::default_logger().trace(__VA_ARGS__)
-#define LITHIUM_LOG_DEBUG(...) ::lithium::logging::default_logger().debug(__VA_ARGS__)
-#define LITHIUM_LOG_INFO(...)  ::lithium::logging::default_logger().info(__VA_ARGS__)
-#define LITHIUM_LOG_WARN(...)  ::lithium::logging::default_logger().warn(__VA_ARGS__)
-#define LITHIUM_LOG_ERROR(...) ::lithium::logging::default_logger().error(__VA_ARGS__)
-#define LITHIUM_LOG_FATAL(...) ::lithium::logging::default_logger().fatal(__VA_ARGS__)
+#define LITHIUM_LOG_TRACE(msg) ::lithium::logging::default_logger().trace(msg)
+#define LITHIUM_LOG_DEBUG(msg) ::lithium::logging::default_logger().debug(msg)
+#define LITHIUM_LOG_INFO(msg)  ::lithium::logging::default_logger().info(msg)
+#define LITHIUM_LOG_WARN(msg)  ::lithium::logging::default_logger().warn(msg)
+#define LITHIUM_LOG_ERROR(msg) ::lithium::logging::default_logger().error(msg)
+#define LITHIUM_LOG_FATAL(msg) ::lithium::logging::default_logger().fatal(msg)
 
 // Debug-only logging
 #ifdef NDEBUG
-    #define LITHIUM_DEBUG_LOG(...) ((void)0)
+    #define LITHIUM_DEBUG_LOG(msg) ((void)0)
 #else
-    #define LITHIUM_DEBUG_LOG(...) LITHIUM_LOG_DEBUG(__VA_ARGS__)
+    #define LITHIUM_DEBUG_LOG(msg) LITHIUM_LOG_DEBUG(msg)
 #endif
 
 // Assertions
-#define LITHIUM_ASSERT(condition, ...) \
+#define LITHIUM_ASSERT(condition, msg) \
     do { \
         if (!(condition)) { \
-            LITHIUM_LOG_FATAL("Assertion failed: " #condition " - " __VA_ARGS__); \
+            LITHIUM_LOG_FATAL("Assertion failed: " #condition " - " msg); \
             std::abort(); \
         } \
     } while (false)

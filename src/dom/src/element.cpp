@@ -23,9 +23,9 @@ Element::Element(const String& namespace_uri, const String& qualified_name)
     : m_namespace_uri(namespace_uri)
 {
     auto colon_pos = qualified_name.find(':');
-    if (colon_pos != String::npos) {
-        m_prefix = qualified_name.substring(0, colon_pos);
-        m_local_name = qualified_name.substring(colon_pos + 1);
+    if (colon_pos.has_value()) {
+        m_prefix = qualified_name.substring(0, colon_pos.value());
+        m_local_name = qualified_name.substring(colon_pos.value() + 1);
     } else {
         m_local_name = qualified_name;
     }
@@ -127,9 +127,9 @@ void Element::set_attribute_ns(const String& namespace_uri, const String& qualif
     String local_name;
 
     auto colon_pos = qualified_name.find(':');
-    if (colon_pos != String::npos) {
-        prefix = qualified_name.substring(0, colon_pos);
-        local_name = qualified_name.substring(colon_pos + 1);
+    if (colon_pos.has_value()) {
+        prefix = qualified_name.substring(0, colon_pos.value());
+        local_name = qualified_name.substring(colon_pos.value() + 1);
     } else {
         local_name = qualified_name;
     }

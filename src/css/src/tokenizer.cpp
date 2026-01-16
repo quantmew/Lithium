@@ -296,7 +296,7 @@ Token Tokenizer::consume_string_token(unicode::CodePoint ending) {
         unicode::CodePoint cp = consume();
 
         if (cp == ending) {
-            return StringToken{result.to_string()};
+            return StringToken{result.build()};
         }
 
         if (cp == '\n') {
@@ -319,7 +319,7 @@ Token Tokenizer::consume_string_token(unicode::CodePoint ending) {
         }
     }
 
-    return StringToken{result.to_string()};
+    return StringToken{result.build()};
 }
 
 Token Tokenizer::consume_url_token() {
@@ -334,7 +334,7 @@ Token Tokenizer::consume_url_token() {
         unicode::CodePoint cp = consume();
 
         if (cp == ')') {
-            return UrlToken{result.to_string()};
+            return UrlToken{result.build()};
         }
 
         if (is_whitespace(cp)) {
@@ -343,7 +343,7 @@ Token Tokenizer::consume_url_token() {
             }
             if (peek() == ')' || at_end()) {
                 if (!at_end()) consume();
-                return UrlToken{result.to_string()};
+                return UrlToken{result.build()};
             }
             consume_remnants_of_bad_url();
             return BadUrlToken{};
@@ -366,7 +366,7 @@ Token Tokenizer::consume_url_token() {
         }
     }
 
-    return UrlToken{result.to_string()};
+    return UrlToken{result.build()};
 }
 
 Token Tokenizer::consume_numeric_token() {
@@ -465,7 +465,7 @@ unicode::CodePoint Tokenizer::consume_escaped_code_point() {
         }
 
         // Convert hex to code point
-        unsigned long value = std::strtoul(hex.to_string().c_str(), nullptr, 16);
+        unsigned long value = std::strtoul(hex.build().c_str(), nullptr, 16);
         if (value == 0 || value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) {
             return 0xFFFD;
         }
@@ -491,7 +491,7 @@ String Tokenizer::consume_name() {
         }
     }
 
-    return result.to_string();
+    return result.build();
 }
 
 std::pair<f64, bool> Tokenizer::consume_number() {
@@ -542,7 +542,7 @@ std::pair<f64, bool> Tokenizer::consume_number() {
         }
     }
 
-    f64 value = std::strtod(repr.to_string().c_str(), nullptr);
+    f64 value = std::strtod(repr.build().c_str(), nullptr);
     return {value, is_integer};
 }
 

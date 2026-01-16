@@ -29,13 +29,30 @@ struct StyleRule {
     DeclarationBlock declarations;
 };
 
+// Forward declaration
+struct RuleVariant;
+
 struct AtRule {
     String name;
     std::vector<ComponentValue> prelude;
-    std::optional<std::vector<std::shared_ptr<struct Rule>>> block;
+    std::optional<std::vector<std::shared_ptr<RuleVariant>>> block;
 };
 
-using Rule = std::variant<StyleRule, AtRule>;
+// Rule is a variant of StyleRule or AtRule
+struct RuleVariant {
+    std::variant<StyleRule, AtRule> value;
+
+    RuleVariant(StyleRule sr) : value(std::move(sr)) {}
+    RuleVariant(AtRule ar) : value(std::move(ar)) {}
+
+    template<typename T>
+    bool is() const { return std::holds_alternative<T>(value); }
+
+    template<typename T>
+    const T& get() const { return std::get<T>(value); }
+};
+
+using Rule = RuleVariant;
 
 // ============================================================================
 // Stylesheet

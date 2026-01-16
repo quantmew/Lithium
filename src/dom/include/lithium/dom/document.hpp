@@ -5,6 +5,22 @@
 
 namespace lithium::dom {
 
+// Forward declaration
+class Document;
+
+// ============================================================================
+// DocumentFragment - Lightweight document container
+// ============================================================================
+
+class DocumentFragment : public Node {
+public:
+    DocumentFragment();
+
+    [[nodiscard]] NodeType node_type() const override { return NodeType::DocumentFragment; }
+    [[nodiscard]] String node_name() const override { return "#document-fragment"_s; }
+    [[nodiscard]] RefPtr<Node> clone_node(bool deep) const override;
+};
+
 // ============================================================================
 // DocumentType
 // ============================================================================
@@ -64,6 +80,7 @@ public:
     [[nodiscard]] RefPtr<Element> create_element_ns(const String& namespace_uri, const String& qualified_name);
     [[nodiscard]] RefPtr<Text> create_text_node(const String& data);
     [[nodiscard]] RefPtr<Node> create_comment(const String& data);
+    [[nodiscard]] RefPtr<DocumentFragment> create_document_fragment();
     [[nodiscard]] RefPtr<DocumentType> create_document_type(
         const String& name, const String& public_id, const String& system_id);
 

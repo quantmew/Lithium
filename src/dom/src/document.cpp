@@ -24,6 +24,23 @@ RefPtr<Node> DocumentType::clone_node(bool /*deep*/) const {
 }
 
 // ============================================================================
+// DocumentFragment
+// ============================================================================
+
+DocumentFragment::DocumentFragment() = default;
+
+RefPtr<Node> DocumentFragment::clone_node(bool deep) const {
+    auto clone = make_ref<DocumentFragment>();
+    if (deep) {
+        for (const auto& child : child_nodes()) {
+            auto child_clone = child->clone_node(true);
+            clone->append_child(child_clone);
+        }
+    }
+    return clone;
+}
+
+// ============================================================================
 // Document
 // ============================================================================
 
@@ -138,6 +155,12 @@ RefPtr<Node> Document::create_comment(const String& data) {
     auto comment = make_ref<Comment>(data);
     comment->set_owner_document(this);
     return comment;
+}
+
+RefPtr<DocumentFragment> Document::create_document_fragment() {
+    auto fragment = make_ref<DocumentFragment>();
+    fragment->set_owner_document(this);
+    return fragment;
 }
 
 RefPtr<DocumentType> Document::create_document_type(

@@ -91,7 +91,7 @@ void ConsoleSink::write(const LogRecord& record) {
     // Add source location for debug/trace
     if (record.level <= LogLevel::Debug) {
         out << " (" << record.location.file_name()
-            << ":" << record.location.line() << ")";
+            << ":" << record.location.line_number() << ")";
     }
 
     out << "\n";
@@ -133,10 +133,10 @@ void FileSink::write(const LogRecord& record) {
                      record.logger_name.data());
     }
 
-    std::fprintf(file, "%.*s (%s:%u)\n",
+    std::fprintf(file, "%.*s (%s:%d)\n",
                  static_cast<int>(record.message.size()), record.message.data(),
                  record.location.file_name(),
-                 record.location.line());
+                 record.location.line_number());
 }
 
 void FileSink::flush() {
@@ -151,31 +151,31 @@ void FileSink::flush() {
 
 Logger::Logger(std::string_view name) : m_name(name) {}
 
-void Logger::trace(std::string_view msg, std::source_location loc) {
+void Logger::trace(std::string_view msg, SourceLocation loc) {
     log_impl(LogLevel::Trace, msg, loc);
 }
 
-void Logger::debug(std::string_view msg, std::source_location loc) {
+void Logger::debug(std::string_view msg, SourceLocation loc) {
     log_impl(LogLevel::Debug, msg, loc);
 }
 
-void Logger::info(std::string_view msg, std::source_location loc) {
+void Logger::info(std::string_view msg, SourceLocation loc) {
     log_impl(LogLevel::Info, msg, loc);
 }
 
-void Logger::warn(std::string_view msg, std::source_location loc) {
+void Logger::warn(std::string_view msg, SourceLocation loc) {
     log_impl(LogLevel::Warn, msg, loc);
 }
 
-void Logger::error(std::string_view msg, std::source_location loc) {
+void Logger::error(std::string_view msg, SourceLocation loc) {
     log_impl(LogLevel::Error, msg, loc);
 }
 
-void Logger::fatal(std::string_view msg, std::source_location loc) {
+void Logger::fatal(std::string_view msg, SourceLocation loc) {
     log_impl(LogLevel::Fatal, msg, loc);
 }
 
-void Logger::log_impl(LogLevel level, std::string_view message, std::source_location loc) {
+void Logger::log_impl(LogLevel level, std::string_view message, SourceLocation loc) {
     if (!is_enabled(level)) return;
 
     auto& s = state();

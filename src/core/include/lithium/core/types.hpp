@@ -10,6 +10,7 @@
 #include <type_traits>
 #include <utility>
 #include <atomic>
+#include <functional>
 
 namespace lithium {
 

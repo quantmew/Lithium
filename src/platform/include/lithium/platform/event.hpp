@@ -1,7 +1,9 @@
 #pragma once
 
 #include "lithium/core/types.hpp"
+#include "lithium/core/string.hpp"
 #include <variant>
+#include <vector>
 
 namespace lithium::platform {
 
@@ -45,7 +47,7 @@ enum class KeyCode : u16 {
 };
 
 enum class KeyModifiers : u8 {
-    None = 0,
+    NoMods = 0,
     Shift = 1 << 0,
     Control = 1 << 1,
     Alt = 1 << 2,

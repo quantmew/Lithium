@@ -988,8 +988,8 @@ void Tokenizer::handle_character_reference_state() {
     auto cp = peek();
     if (!cp) {
         // Flush as character tokens
-        for (usize i = 0; i < m_temp_buffer.length(); ++i) {
-            emit_character(m_temp_buffer.to_string()[i]);
+        for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+            emit_character(m_temp_buffer.build()[i]);
         }
         m_state = m_return_state;
         return;
@@ -1004,8 +1004,8 @@ void Tokenizer::handle_character_reference_state() {
         m_state = TokenizerState::NumericCharacterReference;
     } else {
         // Flush as character tokens
-        for (usize i = 0; i < m_temp_buffer.length(); ++i) {
-            emit_character(m_temp_buffer.to_string()[i]);
+        for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+            emit_character(m_temp_buffer.build()[i]);
         }
         m_state = m_return_state;
     }
