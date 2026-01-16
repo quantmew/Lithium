@@ -1,0 +1,50 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.vs/
+
+# Conan
+CMakeUserPresets.json
+graph_info.json
+conan.lock
+conanbuildinfo.*
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Dependency directories
+_deps/
+
+# Compile commands
+compile_commands.json
+
+# MacOS
+.DS_Store
+
+# Coverage
+*.gcno
+*.gcda
+*.gcov
+coverage/
+
+# Profiling
+*.prof
+*.perf
+
+# Logs
+*.log
