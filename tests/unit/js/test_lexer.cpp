@@ -109,6 +109,13 @@ TEST_F(JSLexerTest, Punctuators) {
     EXPECT_EQ(tokens[16].type, TokenType::Exclamation);
 }
 
+TEST_F(JSLexerTest, LessEqualDoesNotBecomeShiftAssign) {
+    auto tokens = tokenize("<= <<=");
+
+    EXPECT_EQ(tokens[0].type, TokenType::LessEqual);
+    EXPECT_EQ(tokens[1].type, TokenType::LeftShiftAssign);
+}
+
 TEST_F(JSLexerTest, Brackets) {
     auto tokens = tokenize("{ } [ ] ( )");
 
@@ -197,4 +204,14 @@ TEST_F(JSLexerTest, DistinguishesRegExpFromDivisionWithContext) {
     EXPECT_EQ(number.type, TokenType::Number);
     Token slash = lexer.next_token();
     EXPECT_EQ(slash.type, TokenType::Slash);
+}
+
+TEST_F(JSLexerTest, IdentifierSupportsUnicodeEscapesAndRejectsInvalidStarts) {
+    auto tokens = tokenize("\\u006c\\u0065t foo\\u{0062} \\u0030abc");
+
+    ASSERT_GE(tokens.size(), 4u);
+    EXPECT_EQ(tokens[0].type, TokenType::Let); // escaped keyword
+    EXPECT_EQ(tokens[1].type, TokenType::Identifier);
+    EXPECT_EQ(tokens[1].value, String("foob"));
+    EXPECT_EQ(tokens[2].type, TokenType::Invalid); // leading digit escape is not a valid start
 }

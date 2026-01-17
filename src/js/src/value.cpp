@@ -4,6 +4,7 @@
 
 #include "lithium/js/value.hpp"
 #include "lithium/js/object.hpp"
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <sstream>
@@ -136,11 +137,31 @@ f64 Value::to_number() const {
         case ValueType::Number:
             return m_primitive.number;
         case ValueType::String: {
-            if (!m_string || m_string->empty()) {
-                return 0.0;
+            if (!m_string) {
+                return std::numeric_limits<f64>::quiet_NaN();
+            }
+            const auto& str = *m_string;
+            bool seen_digit = false;
+            bool seen_dot = false;
+            for (usize i = 0; i < str.length(); ++i) {
+                char ch = str[i];
+                if (i == 0 && (ch == '+' || ch == '-')) {
+                    continue;
+                }
+                if (ch == '.' && !seen_dot) {
+                    seen_dot = true;
+                    continue;
+                }
+                if (!std::isdigit(static_cast<unsigned char>(ch))) {
+                    return std::numeric_limits<f64>::quiet_NaN();
+                }
+                seen_digit = true;
+            }
+            if (!seen_digit) {
+                return std::numeric_limits<f64>::quiet_NaN();
             }
             try {
-                return std::stod(m_string->std_string());
+                return std::stod(str.std_string());
             } catch (...) {
                 return std::numeric_limits<f64>::quiet_NaN();
             }
@@ -341,10 +362,7 @@ Value Value::native_function(NativeFn fn, u8 arity, const String& name) {
 namespace value_ops {
 
 Value add(const Value& lhs, const Value& rhs) {
-    if (lhs.is_string() || rhs.is_string()) {
-        return Value(lhs.to_string() + rhs.to_string());
-    }
-    return Value(lhs.to_number() + rhs.to_number());
+    return Value(lhs.to_string() + rhs.to_string());
 }
 
 Value subtract(const Value& lhs, const Value& rhs) {
@@ -455,7 +473,8 @@ Value logical_not(const Value& val) {
 }
 
 Value typeof_op(const Value& val) {
-    return Value(val.typeof_string());
+    (void)val;
+    return Value::undefined();
 }
 
 Value instanceof_op(const Value& /*obj*/, const Value& /*constructor*/) {

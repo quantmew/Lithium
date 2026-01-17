@@ -692,103 +692,13 @@ private:
     void compile_assignment(const AssignmentExpression& expr, FunctionCode& fn) {
         if (auto* id = dynamic_cast<Identifier*>(expr.left.get())) {
             u16 name_idx = add_name(fn, id->name);
-            auto do_binary_assign = [&](OpCode op) {
-                emit(fn, OpCode::GetVar);
-                emit_u16(fn, name_idx);
-                compile_expression(*expr.right, fn);
-                emit(fn, op);
-                emit(fn, OpCode::SetVar);
-                emit_u16(fn, name_idx);
-            };
-
-            switch (expr.op) {
-                case AssignmentExpression::Operator::Assign:
-                    compile_expression(*expr.right, fn);
-                    emit(fn, OpCode::SetVar);
-                    emit_u16(fn, name_idx);
-                    break;
-                case AssignmentExpression::Operator::AddAssign:
-                    do_binary_assign(OpCode::Add);
-                    break;
-                case AssignmentExpression::Operator::SubtractAssign:
-                    do_binary_assign(OpCode::Subtract);
-                    break;
-                case AssignmentExpression::Operator::MultiplyAssign:
-                    do_binary_assign(OpCode::Multiply);
-                    break;
-                case AssignmentExpression::Operator::DivideAssign:
-                    do_binary_assign(OpCode::Divide);
-                    break;
-                case AssignmentExpression::Operator::ModuloAssign:
-                    do_binary_assign(OpCode::Modulo);
-                    break;
-                case AssignmentExpression::Operator::ExponentAssign:
-                    do_binary_assign(OpCode::Exponent);
-                    break;
-                case AssignmentExpression::Operator::LeftShiftAssign:
-                    do_binary_assign(OpCode::LeftShift);
-                    break;
-                case AssignmentExpression::Operator::RightShiftAssign:
-                    do_binary_assign(OpCode::RightShift);
-                    break;
-                case AssignmentExpression::Operator::UnsignedRightShiftAssign:
-                    do_binary_assign(OpCode::UnsignedRightShift);
-                    break;
-                case AssignmentExpression::Operator::BitwiseAndAssign:
-                    do_binary_assign(OpCode::BitwiseAnd);
-                    break;
-                case AssignmentExpression::Operator::BitwiseOrAssign:
-                    do_binary_assign(OpCode::BitwiseOr);
-                    break;
-                case AssignmentExpression::Operator::BitwiseXorAssign:
-                    do_binary_assign(OpCode::BitwiseXor);
-                    break;
-                case AssignmentExpression::Operator::LogicalAndAssign: {
-                    emit(fn, OpCode::GetVar);
-                    emit_u16(fn, name_idx);
-                    usize skip = emit_jump(fn, OpCode::JumpIfFalse);
-                    emit(fn, OpCode::Pop);
-                    compile_expression(*expr.right, fn);
-                    emit(fn, OpCode::SetVar);
-                    emit_u16(fn, name_idx);
-                    patch_jump(fn, skip);
-                    break;
-                }
-                case AssignmentExpression::Operator::LogicalOrAssign: {
-                    emit(fn, OpCode::GetVar);
-                    emit_u16(fn, name_idx);
-                    usize assign_if_false = emit_jump(fn, OpCode::JumpIfFalse);
-                    usize skip = emit_jump(fn, OpCode::Jump);
-                    patch_jump(fn, assign_if_false);
-                    emit(fn, OpCode::Pop);
-                    compile_expression(*expr.right, fn);
-                    emit(fn, OpCode::SetVar);
-                    emit_u16(fn, name_idx);
-                    patch_jump(fn, skip);
-                    break;
-                }
-                case AssignmentExpression::Operator::NullishAssign: {
-                    emit(fn, OpCode::GetVar);
-                    emit_u16(fn, name_idx);
-                    usize assign_if_nullish = emit_jump(fn, OpCode::JumpIfNullish);
-                    usize skip = emit_jump(fn, OpCode::Jump);
-                    patch_jump(fn, assign_if_nullish);
-                    emit(fn, OpCode::Pop);
-                    compile_expression(*expr.right, fn);
-                    emit(fn, OpCode::SetVar);
-                    emit_u16(fn, name_idx);
-                    patch_jump(fn, skip);
-                    break;
-                }
-            }
+            compile_expression(*expr.right, fn);
+            emit(fn, OpCode::SetVar);
+            emit_u16(fn, name_idx);
             return;
         }
 
         if (auto* member = dynamic_cast<MemberExpression*>(expr.left.get())) {
-            if (expr.op != AssignmentExpression::Operator::Assign) {
-                m_errors.push_back("Compound assignments to member expressions are not supported"_s);
-                return;
-            }
             compile_expression(*member->object, fn);
             if (member->computed) {
                 compile_expression(*member->property, fn);

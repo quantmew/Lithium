@@ -5,6 +5,7 @@
 #include "lithium/js/lexer.hpp"
 #include <cctype>
 #include <unordered_map>
+#include <cwctype>
 
 namespace lithium::js {
 
@@ -72,7 +73,6 @@ static const std::unordered_map<std::string, TokenType> KEYWORDS = {
     {"return", TokenType::Return},
     {"super", TokenType::Super},
     {"switch", TokenType::Switch},
-    {"this", TokenType::This},
     {"throw", TokenType::Throw},
     {"try", TokenType::Try},
     {"typeof", TokenType::Typeof},
@@ -211,8 +211,8 @@ Token Lexer::scan_token() {
         return scan_number();
     }
 
-    // Identifier or keyword
-    if (is_identifier_start(cp)) {
+    // Identifier or keyword (including escaped start)
+    if (is_identifier_start(cp) || (cp == '\\' && peek(1) == 'u')) {
         return scan_identifier_or_keyword();
     }
 
@@ -222,9 +222,34 @@ Token Lexer::scan_token() {
 
 Token Lexer::scan_identifier_or_keyword() {
     StringBuilder ident;
+    bool first = true;
 
-    while (!at_end() && is_identifier_part(peek())) {
-        ident.append(consume());
+    while (!at_end()) {
+        bool escaped = false;
+        unicode::CodePoint cp = peek();
+        if (cp == '\\' && peek(1) == 'u') {
+            consume(); // '\'
+            consume(); // 'u'
+            escaped = true;
+            cp = scan_unicode_escape();
+        } else if (!(first ? is_identifier_start(cp) : is_identifier_part(cp))) {
+            break;
+        } else {
+            consume();
+        }
+
+        if (first ? !is_identifier_start(cp) : !is_identifier_part(cp)) {
+            error("Invalid identifier character"_s);
+            return make_token(TokenType::Invalid);
+        }
+
+        if (escaped && cp == 0) {
+            error("Invalid Unicode escape in identifier"_s);
+            return make_token(TokenType::Invalid);
+        }
+
+        ident.append(cp);
+        first = false;
     }
 
     String name = ident.build();
@@ -447,10 +472,10 @@ Token Lexer::scan_punctuator() {
             return make_token(TokenType::Question);
 
         case '<':
-            if (consume_if("<=")){
-                return make_token(TokenType::LeftShiftAssign);
+            if (consume_if("<")) {
+                if (consume_if("=")) return make_token(TokenType::LeftShiftAssign);
+                return make_token(TokenType::LeftShift);
             }
-            if (consume_if("<")) return make_token(TokenType::LeftShift);
             if (consume_if("=")) return make_token(TokenType::LessEqual);
             return make_token(TokenType::LessThan);
 
@@ -566,11 +591,23 @@ void Lexer::skip_block_comment() {
 }
 
 bool Lexer::is_identifier_start(unicode::CodePoint cp) const {
-    return std::isalpha(cp) || cp == '_' || cp == '$' || cp > 127;
+    if (cp == '_' || cp == '$') return true;
+    if (unicode::is_ascii_alpha(cp)) return true;
+    if (cp > 0x7F && unicode::is_valid(cp)) {
+        return std::iswalpha(static_cast<wint_t>(cp)) != 0;
+    }
+    return false;
 }
 
 bool Lexer::is_identifier_part(unicode::CodePoint cp) const {
-    return is_identifier_start(cp) || std::isdigit(cp);
+    if (cp == '_' || cp == '$') return true;
+    if (unicode::is_ascii_alphanumeric(cp)) return true;
+    if (cp == 0x200C || cp == 0x200D) return true; // ZWNJ/ZWJ
+    if (cp > 0x7F && unicode::is_valid(cp)) {
+        return std::iswalpha(static_cast<wint_t>(cp)) != 0 ||
+               std::iswdigit(static_cast<wint_t>(cp)) != 0;
+    }
+    return false;
 }
 
 unicode::CodePoint Lexer::scan_unicode_escape() {

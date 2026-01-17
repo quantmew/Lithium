@@ -130,7 +130,14 @@ TEST(JSParserTest, DisallowsNullishMixingWithLogicalWithoutParens) {
 TEST(JSParserTest, ParsesBitwiseAndShiftPrecedence) {
     Parser parser;
     auto expr = parser.parse_expression("1 + 2 << 1"_s);
-    ASSERT_FALSE(parser.has_errors());
+    if (parser.has_errors()) {
+        std::string msg;
+        for (auto& e : parser.errors()) {
+            msg += e.std_string();
+            msg += "; ";
+        }
+        FAIL() << msg;
+    }
 
     auto* shift = assert_cast<BinaryExpression>(expr);
     EXPECT_EQ(shift->op, BinaryExpression::Operator::LeftShift);
@@ -188,4 +195,14 @@ TEST(JSParserTest, ParsesSpreadInArrayAndObject) {
     auto* obj = assert_cast<ObjectExpression>(obj_expr);
     ASSERT_EQ(obj->properties.size(), 2u);
     EXPECT_TRUE(obj->properties[0].spread);
+}
+
+TEST(JSParserTest, ThisIsNotSpecialCased) {
+    Parser parser;
+    auto expr = parser.parse_expression("this"_s);
+    ASSERT_FALSE(parser.has_errors());
+
+    auto* id = dynamic_cast<Identifier*>(expr.get());
+    ASSERT_NE(id, nullptr);
+    EXPECT_EQ(id->name, "this"_s);
 }

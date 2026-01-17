@@ -1101,9 +1101,6 @@ ExpressionPtr Parser::parse_primary_expression() {
         lit->flags = m_previous.regex_flags;
         return lit;
     }
-    if (match(TokenType::This)) {
-        return std::make_unique<ThisExpression>();
-    }
     if (match(TokenType::Identifier)) {
         auto id = std::make_unique<Identifier>();
         id->name = m_previous.value;
