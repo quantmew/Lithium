@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "lithium/core/types.hpp"
+#include "lithium/core/string.hpp"
 
 using namespace lithium;
 

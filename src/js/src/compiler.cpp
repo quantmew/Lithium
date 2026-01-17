@@ -748,7 +748,7 @@ void Compiler::compile_this_expression(const ThisExpression&) {
 void Compiler::compile_array_expression(const ArrayExpression& expr) {
     for (const auto& elem : expr.elements) {
         if (elem) {
-            compile_expression(*elem);
+            compile_expression(**elem);
         } else {
             emit(OpCode::LoadUndefined);
         }

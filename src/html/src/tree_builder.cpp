@@ -37,6 +37,10 @@ static constexpr std::array<const char*, 10> IMPLIED_END_TAG_ELEMENTS = {
     "dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"
 };
 
+static bool is_ascii_whitespace(unicode::CodePoint cp) {
+    return cp == '\t' || cp == '\n' || cp == '\f' || cp == '\r' || cp == ' ';
+}
+
 // ============================================================================
 // TreeBuilder implementation
 // ============================================================================
@@ -451,6 +455,18 @@ void TreeBuilder::process_in_body(const Token& token) {
 
     if (is_start_tag(token)) {
         auto& tag = std::get<TagToken>(token);
+        auto close_p = [&]() {
+            if (!stack_contains_in_button_scope("p"_s)) {
+                return;
+            }
+            generate_implied_end_tags("p"_s);
+            while (current_node() && current_node()->local_name() != "p"_s) {
+                pop_current_element();
+            }
+            if (current_node()) {
+                pop_current_element();
+            }
+        };
 
         // Handle various start tags
         if (tag.name == "base"_s || tag.name == "basefont"_s ||
@@ -485,15 +501,10 @@ void TreeBuilder::process_in_body(const Token& token) {
             tag.name == "nav"_s || tag.name == "ol"_s ||
             tag.name == "p"_s || tag.name == "section"_s ||
             tag.name == "summary"_s || tag.name == "ul"_s) {
-            if (stack_contains_in_button_scope("p"_s)) {
-                // Close p element
-                while (current_node() && current_node()->local_name() != "p"_s) {
-                    pop_current_element();
-                }
-                if (current_node()) {
-                    pop_current_element();
-                }
+            if (tag.name == "p"_s) {
+                m_frameset_ok = false;
             }
+            close_p();
             auto element = create_element_for_token(tag);
             insert_element(element);
             return;
@@ -503,14 +514,7 @@ void TreeBuilder::process_in_body(const Token& token) {
         if (tag.name == "h1"_s || tag.name == "h2"_s ||
             tag.name == "h3"_s || tag.name == "h4"_s ||
             tag.name == "h5"_s || tag.name == "h6"_s) {
-            if (stack_contains_in_button_scope("p"_s)) {
-                while (current_node() && current_node()->local_name() != "p"_s) {
-                    pop_current_element();
-                }
-                if (current_node()) {
-                    pop_current_element();
-                }
-            }
+            close_p();
             auto element = create_element_for_token(tag);
             insert_element(element);
             return;
@@ -518,14 +522,7 @@ void TreeBuilder::process_in_body(const Token& token) {
 
         // Pre, listing
         if (tag.name == "pre"_s || tag.name == "listing"_s) {
-            if (stack_contains_in_button_scope("p"_s)) {
-                while (current_node() && current_node()->local_name() != "p"_s) {
-                    pop_current_element();
-                }
-                if (current_node()) {
-                    pop_current_element();
-                }
-            }
+            close_p();
             auto element = create_element_for_token(tag);
             insert_element(element);
             m_frameset_ok = false;
@@ -538,14 +535,7 @@ void TreeBuilder::process_in_body(const Token& token) {
                 parse_error("Form already open"_s);
                 return;
             }
-            if (stack_contains_in_button_scope("p"_s)) {
-                while (current_node() && current_node()->local_name() != "p"_s) {
-                    pop_current_element();
-                }
-                if (current_node()) {
-                    pop_current_element();
-                }
-            }
+            close_p();
             auto element = create_element_for_token(tag);
             insert_element(element);
             if (!stack_contains("template"_s)) {
@@ -557,6 +547,15 @@ void TreeBuilder::process_in_body(const Token& token) {
         // Li
         if (tag.name == "li"_s) {
             m_frameset_ok = false;
+            if (stack_contains_in_list_item_scope("li"_s)) {
+                generate_implied_end_tags("li"_s);
+                while (current_node() && current_node()->local_name() != "li"_s) {
+                    pop_current_element();
+                }
+                if (current_node()) {
+                    pop_current_element();
+                }
+            }
             auto element = create_element_for_token(tag);
             insert_element(element);
             return;
@@ -565,6 +564,15 @@ void TreeBuilder::process_in_body(const Token& token) {
         // Dd, dt
         if (tag.name == "dd"_s || tag.name == "dt"_s) {
             m_frameset_ok = false;
+            if (stack_contains_in_scope("dd"_s) || stack_contains_in_scope("dt"_s)) {
+                while (current_node() && current_node()->local_name() != "dd"_s &&
+                       current_node()->local_name() != "dt"_s) {
+                    pop_current_element();
+                }
+                if (current_node()) {
+                    pop_current_element();
+                }
+            }
             auto element = create_element_for_token(tag);
             insert_element(element);
             return;
@@ -572,7 +580,19 @@ void TreeBuilder::process_in_body(const Token& token) {
 
         // Formatting elements
         if (tag.name == "a"_s) {
-            // Check for existing a in active formatting
+            for (auto it = m_active_formatting_elements.rbegin();
+                 it != m_active_formatting_elements.rend(); ++it) {
+                if (it->type == ActiveFormattingElement::Type::Marker) {
+                    break;
+                }
+                if (it->element && it->element->local_name() == "a"_s) {
+                    parse_error("Nested <a> element"_s);
+                    adoption_agency_algorithm("a"_s);
+                    remove_from_active_formatting(it->element.get());
+                    remove_from_stack(it->element.get());
+                    break;
+                }
+            }
             reconstruct_active_formatting_elements();
             auto element = create_element_for_token(tag);
             insert_element(element);
@@ -615,14 +635,7 @@ void TreeBuilder::process_in_body(const Token& token) {
         }
 
         if (tag.name == "hr"_s) {
-            if (stack_contains_in_button_scope("p"_s)) {
-                while (current_node() && current_node()->local_name() != "p"_s) {
-                    pop_current_element();
-                }
-                if (current_node()) {
-                    pop_current_element();
-                }
-            }
+            close_p();
             auto element = create_element_for_token(tag);
             insert_element(element);
             pop_current_element();
@@ -632,6 +645,7 @@ void TreeBuilder::process_in_body(const Token& token) {
 
         // Textarea
         if (tag.name == "textarea"_s) {
+            close_p();
             auto element = create_element_for_token(tag);
             insert_element(element);
             if (m_tokenizer) {
@@ -743,11 +757,16 @@ void TreeBuilder::process_in_body(const Token& token) {
                 auto p = m_document->create_element("p"_s);
                 insert_element(p);
             }
-            while (current_node() && current_node()->local_name() != "p"_s) {
-                pop_current_element();
+            generate_implied_end_tags("p"_s);
+            if (!current_node() || current_node()->local_name() != "p"_s) {
+                parse_error("Closing p but current node is different"_s);
             }
-            if (current_node()) {
+            while (current_node()) {
+                auto name = current_node()->local_name();
                 pop_current_element();
+                if (name == "p"_s) {
+                    break;
+                }
             }
             return;
         }
@@ -866,6 +885,28 @@ void TreeBuilder::process_text(const Token& token) {
 }
 
 void TreeBuilder::process_in_table(const Token& token) {
+    if (auto* character = std::get_if<CharacterToken>(&token)) {
+        if (character->code_point == 0) {
+            parse_error("Unexpected null character in table"_s);
+            return;
+        }
+        m_pending_table_characters.clear();
+        m_pending_table_characters.push_back(character->code_point);
+        m_original_insertion_mode = m_insertion_mode;
+        m_insertion_mode = InsertionMode::InTableText;
+        return;
+    }
+
+    if (auto* comment = std::get_if<CommentToken>(&token)) {
+        insert_comment(*comment);
+        return;
+    }
+
+    if (auto* doctype = std::get_if<DoctypeToken>(&token)) {
+        parse_error("Unexpected DOCTYPE inside table"_s);
+        return;
+    }
+
     // Simplified table handling
     if (is_start_tag(token)) {
         auto& tag = std::get<TagToken>(token);
@@ -907,7 +948,37 @@ void TreeBuilder::process_in_table(const Token& token) {
 }
 
 void TreeBuilder::process_in_table_text(const Token& token) {
-    process_in_table(token);
+    if (auto* character = std::get_if<CharacterToken>(&token)) {
+        if (character->code_point == 0) {
+            parse_error("Unexpected null character in table text"_s);
+            return;
+        }
+        m_pending_table_characters.push_back(character->code_point);
+        return;
+    }
+
+    bool previous_foster = m_foster_parenting;
+    bool any_non_whitespace = false;
+    for (auto cp : m_pending_table_characters) {
+        if (!is_ascii_whitespace(cp)) {
+            any_non_whitespace = true;
+            break;
+        }
+    }
+
+    if (any_non_whitespace) {
+        parse_error("Non-whitespace text in table context"_s);
+        m_foster_parenting = true;
+    }
+
+    for (auto cp : m_pending_table_characters) {
+        insert_character(cp);
+    }
+
+    m_pending_table_characters.clear();
+    m_foster_parenting = previous_foster;
+    m_insertion_mode = m_original_insertion_mode;
+    process_token(token);
 }
 
 void TreeBuilder::process_in_caption(const Token& token) {
@@ -1107,25 +1178,36 @@ RefPtr<dom::Element> TreeBuilder::create_element_for_token(const TagToken& token
 }
 
 void TreeBuilder::insert_element(RefPtr<dom::Element> element) {
-    auto* insert_at = appropriate_insertion_place();
-    if (insert_at) {
-        insert_at->append_child(element);
+    auto insertion = appropriate_insertion_place();
+    if (insertion.parent) {
+        if (insertion.insert_before) {
+            insertion.parent->insert_before(element, insertion.insert_before);
+        } else {
+            insertion.parent->append_child(element);
+        }
     }
     push_open_element(element);
 }
 
 void TreeBuilder::insert_character(unicode::CodePoint cp) {
-    auto* insert_at = appropriate_insertion_place();
-    if (!insert_at) return;
+    auto insertion = appropriate_insertion_place();
+    auto* insert_parent = insertion.parent;
+    if (!insert_parent) return;
 
-    // Check if last child is a text node
-    auto* last = insert_at->last_child();
-    if (last && last->is_text()) {
-        auto* text = last->as_text();
-        text->append_data(String(1, static_cast<char>(cp)));
+    dom::Node* adjacent = insertion.insert_before
+        ? insertion.insert_before->previous_sibling()
+        : insert_parent->last_child();
+
+    if (adjacent && adjacent->is_text()) {
+        adjacent->as_text()->append_data(String(1, static_cast<char>(cp)));
+        return;
+    }
+
+    auto text = m_document->create_text_node(String(1, static_cast<char>(cp)));
+    if (insertion.insert_before) {
+        insert_parent->insert_before(text, insertion.insert_before);
     } else {
-        auto text = m_document->create_text_node(String(1, static_cast<char>(cp)));
-        insert_at->append_child(text);
+        insert_parent->append_child(text);
     }
 }
 
@@ -1346,19 +1428,24 @@ void TreeBuilder::adoption_agency_algorithm(const String& tag_name) {
 // Foster parenting
 // ============================================================================
 
-dom::Node* TreeBuilder::appropriate_insertion_place() {
+TreeBuilder::InsertionLocation TreeBuilder::appropriate_insertion_place() {
     if (m_foster_parenting) {
         // Find last table in stack
         for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
             if ((*it)->local_name() == "table"_s) {
-                if ((*it)->parent_node()) {
-                    return (*it)->parent_node();
+                auto* table = it->get();
+                if (auto* parent = table->parent_node()) {
+                    return {parent, table};
+                }
+                auto next = it + 1;
+                if (next != m_open_elements.rend()) {
+                    return {next->get(), nullptr};
                 }
             }
         }
     }
 
-    return current_node();
+    return {adjusted_current_node(), nullptr};
 }
 
 // ============================================================================

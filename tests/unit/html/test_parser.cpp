@@ -163,3 +163,96 @@ TEST_F(HTMLParserTest, GetElementsByClassName) {
     auto elements = doc->get_elements_by_class_name(String("foo"));
     EXPECT_EQ(elements.size(), 2u);
 }
+
+TEST_F(HTMLParserTest, ParagraphsAutoCloseWhenStartingNewParagraph) {
+    auto doc = parse("<p>one<p>two");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+
+    auto* first_p = body->first_element_child();
+    ASSERT_NE(first_p, nullptr);
+    EXPECT_EQ(first_p->tag_name(), String("p"));
+    EXPECT_EQ(first_p->text_content(), String("one"));
+
+    ASSERT_TRUE(first_p->next_sibling()->is_element());
+    auto* second_p = first_p->next_sibling()->as_element();
+    ASSERT_NE(second_p, nullptr);
+    EXPECT_EQ(second_p->tag_name(), String("p"));
+    EXPECT_EQ(second_p->text_content(), String("two"));
+}
+
+TEST_F(HTMLParserTest, ListItemsImplicitlyClosePreviousItem) {
+    auto doc = parse("<ul><li>one<li>two</ul>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+
+    auto* ul = body->first_element_child();
+    ASSERT_NE(ul, nullptr);
+    EXPECT_EQ(ul->tag_name(), String("ul"));
+    ASSERT_EQ(ul->child_nodes().size(), 2u);
+
+    auto* first_li = ul->first_element_child();
+    ASSERT_NE(first_li, nullptr);
+    EXPECT_EQ(first_li->text_content(), String("one"));
+
+    ASSERT_TRUE(first_li->next_sibling()->is_element());
+    auto* second_li = first_li->next_sibling()->as_element();
+    ASSERT_NE(second_li, nullptr);
+    EXPECT_EQ(second_li->text_content(), String("two"));
+}
+
+TEST_F(HTMLParserTest, DescriptionListTermsCloseAutomatically) {
+    auto doc = parse("<dl><dt>Term<dd>Def 1<dd>Def 2");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+
+    auto* dl = body->first_element_child();
+    ASSERT_NE(dl, nullptr);
+    EXPECT_EQ(dl->tag_name(), String("dl"));
+    ASSERT_EQ(dl->child_nodes().size(), 3u);
+
+    auto* dt = dl->first_element_child();
+    ASSERT_NE(dt, nullptr);
+    EXPECT_EQ(dt->tag_name(), String("dt"));
+    EXPECT_EQ(dt->text_content(), String("Term"));
+
+    ASSERT_TRUE(dt->next_sibling()->is_element());
+    auto* dd1 = dt->next_sibling()->as_element();
+    ASSERT_NE(dd1, nullptr);
+    EXPECT_EQ(dd1->tag_name(), String("dd"));
+    EXPECT_EQ(dd1->text_content(), String("Def 1"));
+
+    ASSERT_TRUE(dd1->next_sibling()->is_element());
+    auto* dd2 = dd1->next_sibling()->as_element();
+    ASSERT_NE(dd2, nullptr);
+    EXPECT_EQ(dd2->tag_name(), String("dd"));
+    EXPECT_EQ(dd2->text_content(), String("Def 2"));
+}
+
+TEST_F(HTMLParserTest, TableCharactersAreFosterParented) {
+    auto doc = parse("<div><table>Text<tr><td>Cell</td></tr></table></div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+    ASSERT_TRUE(div->first_child()->is_text());
+    EXPECT_EQ(div->first_child()->text_content(), String("Text"));
+
+    auto* table = div->first_element_child();
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->tag_name(), String("table"));
+    // Text should not end up inside the table
+    ASSERT_TRUE(table->first_child()->is_element());
+    auto* first_in_table = table->first_element_child();
+    if (first_in_table->tag_name() == String("tbody")) {
+        ASSERT_NE(first_in_table->first_element_child(), nullptr);
+        EXPECT_EQ(first_in_table->first_element_child()->tag_name(), String("tr"));
+    } else {
+        EXPECT_EQ(first_in_table->tag_name(), String("tr"));
+    }
+}

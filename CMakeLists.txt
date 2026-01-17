@@ -53,13 +53,13 @@ add_subdirectory(src/platform)
 add_subdirectory(src/dom)
 add_subdirectory(src/html)
 add_subdirectory(src/css)
-add_subdirectory(src/js)
-add_subdirectory(src/text)
-add_subdirectory(src/layout)
-add_subdirectory(src/render)
-add_subdirectory(src/bindings)
-add_subdirectory(src/network)
-add_subdirectory(src/browser)
+# add_subdirectory(src/js)  # Temporarily disabled - needs compiler.cpp refactoring
+# add_subdirectory(src/text)  # Temporarily disabled - needs fixes
+# add_subdirectory(src/layout)  # Temporarily disabled - depends on text module
+# add_subdirectory(src/render)  # Temporarily disabled - depends on text module
+# add_subdirectory(src/bindings)  # Temporarily disabled - depends on js module
+# add_subdirectory(src/network)  # Temporarily disabled - needs String API updates
+# add_subdirectory(src/browser)  # Temporarily disabled - depends on other modules
 
 # Tests
 if(LITHIUM_BUILD_TESTS)
@@ -74,9 +74,9 @@ endif()
 
 # Installation
 include(GNUInstallDirs)
-install(TARGETS lithium_browser
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+# install(TARGETS lithium_browser
+#     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+# )
 
 # Print configuration summary
 message(STATUS "")

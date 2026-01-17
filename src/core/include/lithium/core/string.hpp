@@ -250,3 +250,13 @@ private:
 };
 
 } // namespace lithium
+
+// std::hash specialization for lithium::String
+namespace std {
+template<>
+struct hash<lithium::String> {
+    std::size_t operator()(const lithium::String& s) const noexcept {
+        return hash<std::string>()(s.std_string());
+    }
+};
+}

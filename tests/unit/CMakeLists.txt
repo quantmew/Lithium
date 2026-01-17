@@ -27,29 +27,35 @@ lithium_add_module_tests(css
 )
 
 # JavaScript module tests
-lithium_add_module_tests(js
-    SOURCES
-        js/test_lexer.cpp
-        js/test_parser.cpp
-        js/test_vm.cpp
-)
+if(TARGET lithium_js)
+    lithium_add_module_tests(js
+        SOURCES
+            js/test_lexer.cpp
+            js/test_parser.cpp
+            js/test_vm.cpp
+    )
+endif()
 
 # Layout module tests
-lithium_add_module_tests(layout
-    SOURCES
-        layout/test_box.cpp
-        layout/test_block_layout.cpp
-    DEPENDENCIES
-        lithium_dom
-        lithium_css
-        lithium_text
-)
+if(TARGET lithium_layout)
+    lithium_add_module_tests(layout
+        SOURCES
+            layout/test_box.cpp
+            layout/test_block_layout.cpp
+        DEPENDENCIES
+            lithium_dom
+            lithium_css
+            lithium_text
+    )
+endif()
 
 # Render module tests
-lithium_add_module_tests(render
-    SOURCES
-        render/test_display_list.cpp
-    DEPENDENCIES
-        lithium_layout
-        lithium_platform
-)
+if(TARGET lithium_render)
+    lithium_add_module_tests(render
+        SOURCES
+            render/test_display_list.cpp
+        DEPENDENCIES
+            lithium_layout
+            lithium_platform
+    )
+endif()

@@ -2,4 +2,7 @@
 
 add_subdirectory(html_parser_cli)
 add_subdirectory(css_parser_cli)
-add_subdirectory(js_repl)
+
+if(TARGET lithium_js)
+    add_subdirectory(js_repl)
+endif()

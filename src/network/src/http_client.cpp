@@ -257,7 +257,7 @@ HttpClient::~HttpClient() = default;
 
 Result<HttpResponse, String> HttpClient::send(const HttpRequest& request) {
     // Stub implementation without CURL
-    return Result<HttpResponse, String>::error("HTTP client not available (built without CURL)"_s);
+    return make_error("HTTP client not available (built without CURL)"_s);
 }
 
 #endif // LITHIUM_HAS_CURL

@@ -198,6 +198,8 @@ void Tokenizer::emit_current_token() {
 
 void Tokenizer::emit_eof() {
     emit(EndOfFileToken{});
+    // Advance past end so the main loops terminate after emitting EOF
+    m_position = m_input.length() + 1;
 }
 
 void Tokenizer::parse_error(const String& message) {
@@ -291,6 +293,153 @@ void Tokenizer::process_state() {
             break;
         case TokenizerState::CharacterReference:
             handle_character_reference_state();
+            break;
+        case TokenizerState::RCDATALessThanSign:
+            handle_rcdata_less_than_sign_state();
+            break;
+        case TokenizerState::RCDATAEndTagOpen:
+            handle_rcdata_end_tag_open_state();
+            break;
+        case TokenizerState::RCDATAEndTagName:
+            handle_rcdata_end_tag_name_state();
+            break;
+        case TokenizerState::RAWTEXTLessThanSign:
+            handle_rawtext_less_than_sign_state();
+            break;
+        case TokenizerState::RAWTEXTEndTagOpen:
+            handle_rawtext_end_tag_open_state();
+            break;
+        case TokenizerState::RAWTEXTEndTagName:
+            handle_rawtext_end_tag_name_state();
+            break;
+        case TokenizerState::ScriptDataLessThanSign:
+            handle_script_data_less_than_sign_state();
+            break;
+        case TokenizerState::ScriptDataEndTagOpen:
+            handle_script_data_end_tag_open_state();
+            break;
+        case TokenizerState::ScriptDataEndTagName:
+            handle_script_data_end_tag_name_state();
+            break;
+        case TokenizerState::ScriptDataEscapeStart:
+            handle_script_data_escape_start_state();
+            break;
+        case TokenizerState::ScriptDataEscapeStartDash:
+            handle_script_data_escape_start_dash_state();
+            break;
+        case TokenizerState::ScriptDataEscaped:
+            handle_script_data_escaped_state();
+            break;
+        case TokenizerState::ScriptDataEscapedDash:
+            handle_script_data_escaped_dash_state();
+            break;
+        case TokenizerState::ScriptDataEscapedDashDash:
+            handle_script_data_escaped_dash_dash_state();
+            break;
+        case TokenizerState::ScriptDataEscapedLessThanSign:
+            handle_script_data_escaped_less_than_sign_state();
+            break;
+        case TokenizerState::ScriptDataEscapedEndTagOpen:
+            handle_script_data_escaped_end_tag_open_state();
+            break;
+        case TokenizerState::ScriptDataEscapedEndTagName:
+            handle_script_data_escaped_end_tag_name_state();
+            break;
+        case TokenizerState::ScriptDataDoubleEscapeStart:
+            handle_script_data_double_escape_start_state();
+            break;
+        case TokenizerState::ScriptDataDoubleEscaped:
+            handle_script_data_double_escaped_state();
+            break;
+        case TokenizerState::ScriptDataDoubleEscapedDash:
+            handle_script_data_double_escaped_dash_state();
+            break;
+        case TokenizerState::ScriptDataDoubleEscapedDashDash:
+            handle_script_data_double_escaped_dash_dash_state();
+            break;
+        case TokenizerState::ScriptDataDoubleEscapedLessThanSign:
+            handle_script_data_double_escaped_less_than_sign_state();
+            break;
+        case TokenizerState::ScriptDataDoubleEscapeEnd:
+            handle_script_data_double_escape_end_state();
+            break;
+        case TokenizerState::CommentStartDash:
+            handle_comment_start_dash_state();
+            break;
+        case TokenizerState::CommentLessThanSign:
+            handle_comment_less_than_sign_state();
+            break;
+        case TokenizerState::CommentLessThanSignBang:
+            handle_comment_less_than_sign_bang_state();
+            break;
+        case TokenizerState::CommentLessThanSignBangDash:
+            handle_comment_less_than_sign_bang_dash_state();
+            break;
+        case TokenizerState::CommentLessThanSignBangDashDash:
+            handle_comment_less_than_sign_bang_dash_dash_state();
+            break;
+        case TokenizerState::CommentEndBang:
+            handle_comment_end_bang_state();
+            break;
+        case TokenizerState::AfterDOCTYPEPublicKeyword:
+            handle_after_doctype_public_keyword_state();
+            break;
+        case TokenizerState::BeforeDOCTYPEPublicIdentifier:
+            handle_before_doctype_public_identifier_state();
+            break;
+        case TokenizerState::DOCTYPEPublicIdentifierDoubleQuoted:
+            handle_doctype_public_identifier_double_quoted_state();
+            break;
+        case TokenizerState::DOCTYPEPublicIdentifierSingleQuoted:
+            handle_doctype_public_identifier_single_quoted_state();
+            break;
+        case TokenizerState::AfterDOCTYPEPublicIdentifier:
+            handle_after_doctype_public_identifier_state();
+            break;
+        case TokenizerState::BetweenDOCTYPEPublicAndSystemIdentifiers:
+            handle_between_doctype_public_and_system_identifiers_state();
+            break;
+        case TokenizerState::AfterDOCTYPESystemKeyword:
+            handle_after_doctype_system_keyword_state();
+            break;
+        case TokenizerState::BeforeDOCTYPESystemIdentifier:
+            handle_before_doctype_system_identifier_state();
+            break;
+        case TokenizerState::DOCTYPESystemIdentifierDoubleQuoted:
+            handle_doctype_system_identifier_double_quoted_state();
+            break;
+        case TokenizerState::DOCTYPESystemIdentifierSingleQuoted:
+            handle_doctype_system_identifier_single_quoted_state();
+            break;
+        case TokenizerState::AfterDOCTYPESystemIdentifier:
+            handle_after_doctype_system_identifier_state();
+            break;
+        case TokenizerState::BogusDOCTYPE:
+            handle_bogus_doctype_state();
+            break;
+        case TokenizerState::NamedCharacterReference:
+            handle_named_character_reference_state();
+            break;
+        case TokenizerState::AmbiguousAmpersand:
+            handle_ambiguous_ampersand_state();
+            break;
+        case TokenizerState::NumericCharacterReference:
+            handle_numeric_character_reference_state();
+            break;
+        case TokenizerState::HexadecimalCharacterReferenceStart:
+            handle_hexadecimal_character_reference_start_state();
+            break;
+        case TokenizerState::DecimalCharacterReferenceStart:
+            handle_decimal_character_reference_start_state();
+            break;
+        case TokenizerState::HexadecimalCharacterReference:
+            handle_hexadecimal_character_reference_state();
+            break;
+        case TokenizerState::DecimalCharacterReference:
+            handle_decimal_character_reference_state();
+            break;
+        case TokenizerState::NumericCharacterReferenceEnd:
+            handle_numeric_character_reference_end_state();
             break;
         default:
             // Handle remaining states with data state as fallback
@@ -560,16 +709,25 @@ void Tokenizer::handle_after_attribute_name_state() {
 
     consume();
 
+    auto flush_attribute_if_needed = [&]() {
+        if (!m_current_attribute_name.empty()) {
+            finish_attribute_value();
+        }
+    };
+
     if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
         // Ignore
     } else if (*cp == '/') {
+        flush_attribute_if_needed();
         m_state = TokenizerState::SelfClosingStartTag;
     } else if (*cp == '=') {
         m_state = TokenizerState::BeforeAttributeValue;
     } else if (*cp == '>') {
+        flush_attribute_if_needed();
         m_state = TokenizerState::Data;
         emit_current_token();
     } else {
+        flush_attribute_if_needed();
         start_new_attribute();
         reconsume();
         m_state = TokenizerState::AttributeName;
@@ -1050,6 +1208,881 @@ unicode::CodePoint Tokenizer::consume_named_character_reference() {
 unicode::CodePoint Tokenizer::consume_numeric_character_reference() {
     // TODO: Implement numeric character reference
     return '&';
+}
+
+// ============================================================================
+// Additional state handlers following HTML5 spec
+// ============================================================================
+
+// RCDATA less-than sign state (13.2.5.9)
+void Tokenizer::handle_rcdata_less_than_sign_state() {
+    auto cp = peek();
+    if (!cp) {
+        emit_character('<');
+        emit_eof();
+        return;
+    }
+
+    if (*cp == '/') {
+        consume();
+        m_state = TokenizerState::RCDATAEndTagOpen;
+        return;
+    }
+
+    emit_character('<');
+    m_state = TokenizerState::RCDATA;
+}
+
+// RCDATA end tag open state (13.2.5.10)
+void Tokenizer::handle_rcdata_end_tag_open_state() {
+    if (!m_last_start_tag_name.empty() && consume_if_match(m_last_start_tag_name.c_str(), true)) {
+        auto cp = peek();
+        if (cp && *cp == '>') {
+            consume();
+            m_current_token = TagToken{};
+            auto& tag = std::get<TagToken>(*m_current_token);
+            tag.name = m_last_start_tag_name;
+            tag.is_end_tag = true;
+            emit_current_token();
+            m_state = TokenizerState::Data;
+            return;
+        }
+    }
+
+    emit_character('<');
+    emit_character('/');
+    m_state = TokenizerState::RCDATA;
+}
+
+// RCDATA end tag name state (13.2.5.11)
+void Tokenizer::handle_rcdata_end_tag_name_state() {
+    emit_character('<');
+    emit_character('/');
+    // Emit buffer contents
+    for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+        emit_character(m_temp_buffer.build()[i]);
+    }
+    m_state = TokenizerState::RCDATA;
+}
+
+// RAWTEXT less-than sign state (13.2.5.12)
+void Tokenizer::handle_rawtext_less_than_sign_state() {
+    auto cp = peek();
+    if (!cp) {
+        emit_character('<');
+        emit_eof();
+        return;
+    }
+
+    if (*cp == '/') {
+        consume();
+        m_state = TokenizerState::RAWTEXTEndTagOpen;
+        return;
+    }
+
+    emit_character('<');
+    m_state = TokenizerState::RAWTEXT;
+}
+
+// RAWTEXT end tag open state (13.2.5.13)
+void Tokenizer::handle_rawtext_end_tag_open_state() {
+    if (!m_last_start_tag_name.empty() && consume_if_match(m_last_start_tag_name.c_str(), true)) {
+        auto cp = peek();
+        if (cp && *cp == '>') {
+            consume();
+            m_current_token = TagToken{};
+            auto& tag = std::get<TagToken>(*m_current_token);
+            tag.name = m_last_start_tag_name;
+            tag.is_end_tag = true;
+            emit_current_token();
+            m_state = TokenizerState::Data;
+            return;
+        }
+    }
+
+    emit_character('<');
+    emit_character('/');
+    m_state = TokenizerState::RAWTEXT;
+}
+
+// RAWTEXT end tag name state (13.2.5.14)
+void Tokenizer::handle_rawtext_end_tag_name_state() {
+    emit_character('<');
+    emit_character('/');
+    // Emit buffer contents
+    for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+        emit_character(m_temp_buffer.build()[i]);
+    }
+    m_state = TokenizerState::RAWTEXT;
+}
+
+// Script data less-than sign state (13.2.5.15)
+void Tokenizer::handle_script_data_less_than_sign_state() {
+    auto cp = peek();
+    if (!cp) {
+        emit_character('<');
+        emit_eof();
+        return;
+    }
+
+    if (*cp == '/') {
+        consume();
+        m_state = TokenizerState::ScriptDataEndTagOpen;
+        return;
+    }
+
+    emit_character('<');
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data end tag open state (13.2.5.16)
+void Tokenizer::handle_script_data_end_tag_open_state() {
+    // Check for </script>
+    if (consume_if_match("script", true)) {
+        auto cp = peek();
+        if (cp && *cp == '>') {
+            consume();
+            m_current_token = TagToken{};
+            auto& tag = std::get<TagToken>(*m_current_token);
+            tag.name = "script"_s;
+            tag.is_end_tag = true;
+            emit_current_token();
+            m_state = TokenizerState::Data;
+            return;
+        }
+        // Not a real end tag, fall through to emit text
+    }
+
+    emit_character('<');
+    emit_character('/');
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data end tag name state (13.2.5.17)
+void Tokenizer::handle_script_data_end_tag_name_state() {
+    emit_character('<');
+    emit_character('/');
+    // Emit buffer contents
+    for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+        emit_character(m_temp_buffer.build()[i]);
+    }
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data escape start state (13.2.5.18)
+void Tokenizer::handle_script_data_escape_start_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data escape start dash state (13.2.5.19)
+void Tokenizer::handle_script_data_escape_start_dash_state() {
+    emit_character('-');
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data escaped state (13.2.5.20)
+void Tokenizer::handle_script_data_escaped_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data escaped dash state (13.2.5.21)
+void Tokenizer::handle_script_data_escaped_dash_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data escaped dash dash state (13.2.5.22)
+void Tokenizer::handle_script_data_escaped_dash_dash_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data escaped less-than sign state (13.2.5.23)
+void Tokenizer::handle_script_data_escaped_less_than_sign_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data escaped end tag open state (13.2.5.24)
+void Tokenizer::handle_script_data_escaped_end_tag_open_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data escaped end tag name state (13.2.5.25)
+void Tokenizer::handle_script_data_escaped_end_tag_name_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data double escape start state (13.2.5.26)
+void Tokenizer::handle_script_data_double_escape_start_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data double escaped state (13.2.5.27)
+void Tokenizer::handle_script_data_double_escaped_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data double escaped dash state (13.2.5.28)
+void Tokenizer::handle_script_data_double_escaped_dash_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data double escaped dash dash state (13.2.5.29)
+void Tokenizer::handle_script_data_double_escaped_dash_dash_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data double escaped less-than sign state (13.2.5.30)
+void Tokenizer::handle_script_data_double_escaped_less_than_sign_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Script data double escape end state (13.2.5.31)
+void Tokenizer::handle_script_data_double_escape_end_state() {
+    reconsume();
+    m_state = TokenizerState::ScriptData;
+}
+
+// Comment start dash state (13.2.5.44)
+void Tokenizer::handle_comment_start_dash_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-comment"_s);
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '-') {
+        m_state = TokenizerState::CommentEnd;
+    } else if (*cp == '>') {
+        parse_error("abrupt-closing-of-empty-comment"_s);
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else {
+        auto& comment = std::get<CommentToken>(*m_current_token);
+        comment.data = comment.data + "-"_s;
+        reconsume();
+        m_state = TokenizerState::Comment;
+    }
+}
+
+// Comment less-than sign state (13.2.5.46)
+void Tokenizer::handle_comment_less_than_sign_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-comment"_s);
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '!') {
+        m_state = TokenizerState::CommentLessThanSignBang;
+    } else {
+        reconsume();
+        m_state = TokenizerState::Comment;
+    }
+}
+
+// Comment less-than sign bang state (13.2.5.47)
+void Tokenizer::handle_comment_less_than_sign_bang_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-comment"_s);
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '-') {
+        m_state = TokenizerState::CommentLessThanSignBangDash;
+    } else {
+        reconsume();
+        m_state = TokenizerState::Comment;
+    }
+}
+
+// Comment less-than sign bang dash state (13.2.5.48)
+void Tokenizer::handle_comment_less_than_sign_bang_dash_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-comment"_s);
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '-') {
+        m_state = TokenizerState::CommentLessThanSignBangDashDash;
+    } else {
+        reconsume();
+        m_state = TokenizerState::CommentEndDash;
+    }
+}
+
+// Comment less-than sign bang dash dash state (13.2.5.49)
+void Tokenizer::handle_comment_less_than_sign_bang_dash_dash_state() {
+    auto cp = peek();
+    if (!cp || *cp == '>') {
+        reconsume();
+        m_state = TokenizerState::CommentEnd;
+    } else {
+        parse_error("nested-comment"_s);
+        reconsume();
+        m_state = TokenizerState::CommentEnd;
+    }
+}
+
+// Comment end bang state (13.2.5.52)
+void Tokenizer::handle_comment_end_bang_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-comment"_s);
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '-') {
+        auto& comment = std::get<CommentToken>(*m_current_token);
+        comment.data = comment.data + "--!"_s;
+        m_state = TokenizerState::CommentEndDash;
+    } else if (*cp == '>') {
+        parse_error("incorrectly-closed-comment"_s);
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else {
+        auto& comment = std::get<CommentToken>(*m_current_token);
+        comment.data = comment.data + "--!"_s;
+        reconsume();
+        m_state = TokenizerState::Comment;
+    }
+}
+
+// DOCTYPE public keyword states (13.2.5.57-61)
+void Tokenizer::handle_after_doctype_public_keyword_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
+        m_state = TokenizerState::BeforeDOCTYPEPublicIdentifier;
+    } else if (*cp == '"') {
+        parse_error("missing-whitespace-after-doctype-public-keyword"_s);
+        std::get<DoctypeToken>(*m_current_token).public_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPEPublicIdentifierDoubleQuoted;
+    } else if (*cp == '\'') {
+        parse_error("missing-whitespace-after-doctype-public-keyword"_s);
+        std::get<DoctypeToken>(*m_current_token).public_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPEPublicIdentifierSingleQuoted;
+    } else if (*cp == '>') {
+        parse_error("missing-doctype-public-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else {
+        parse_error("missing-quote-before-doctype-public-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::BogusDOCTYPE;
+    }
+}
+
+void Tokenizer::handle_before_doctype_public_identifier_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
+        // Ignore
+    } else if (*cp == '"') {
+        std::get<DoctypeToken>(*m_current_token).public_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPEPublicIdentifierDoubleQuoted;
+    } else if (*cp == '\'') {
+        std::get<DoctypeToken>(*m_current_token).public_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPEPublicIdentifierSingleQuoted;
+    } else if (*cp == '>') {
+        parse_error("missing-doctype-public-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else {
+        parse_error("missing-quote-before-doctype-public-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::BogusDOCTYPE;
+    }
+}
+
+void Tokenizer::handle_doctype_public_identifier_double_quoted_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '"') {
+        m_state = TokenizerState::AfterDOCTYPEPublicIdentifier;
+    } else if (*cp == '>') {
+        parse_error("abrupt-doctype-public-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else if (*cp == 0) {
+        parse_error("unexpected-null-character"_s);
+        auto& doctype = std::get<DoctypeToken>(*m_current_token);
+        if (doctype.public_identifier) {
+            *doctype.public_identifier = *doctype.public_identifier + String(1, static_cast<char>(0xFFFD));
+        }
+    } else {
+        auto& doctype = std::get<DoctypeToken>(*m_current_token);
+        if (doctype.public_identifier) {
+            *doctype.public_identifier = *doctype.public_identifier + String(1, static_cast<char>(*cp));
+        }
+    }
+}
+
+void Tokenizer::handle_doctype_public_identifier_single_quoted_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\'') {
+        m_state = TokenizerState::AfterDOCTYPEPublicIdentifier;
+    } else if (*cp == '>') {
+        parse_error("abrupt-doctype-public-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else if (*cp == 0) {
+        parse_error("unexpected-null-character"_s);
+        auto& doctype = std::get<DoctypeToken>(*m_current_token);
+        if (doctype.public_identifier) {
+            *doctype.public_identifier = *doctype.public_identifier + String(1, static_cast<char>(0xFFFD));
+        }
+    } else {
+        auto& doctype = std::get<DoctypeToken>(*m_current_token);
+        if (doctype.public_identifier) {
+            *doctype.public_identifier = *doctype.public_identifier + String(1, static_cast<char>(*cp));
+        }
+    }
+}
+
+void Tokenizer::handle_after_doctype_public_identifier_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
+        m_state = TokenizerState::BetweenDOCTYPEPublicAndSystemIdentifiers;
+    } else if (*cp == '>') {
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else if (*cp == '"') {
+        parse_error("missing-whitespace-between-doctype-public-and-system-identifiers"_s);
+        std::get<DoctypeToken>(*m_current_token).system_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPESystemIdentifierDoubleQuoted;
+    } else if (*cp == '\'') {
+        parse_error("missing-whitespace-between-doctype-public-and-system-identifiers"_s);
+        std::get<DoctypeToken>(*m_current_token).system_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPESystemIdentifierSingleQuoted;
+    } else {
+        parse_error("missing-quote-before-doctype-system-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::BogusDOCTYPE;
+    }
+}
+
+void Tokenizer::handle_between_doctype_public_and_system_identifiers_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
+        // Ignore
+    } else if (*cp == '>') {
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else if (*cp == '"') {
+        std::get<DoctypeToken>(*m_current_token).system_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPESystemIdentifierDoubleQuoted;
+    } else if (*cp == '\'') {
+        std::get<DoctypeToken>(*m_current_token).system_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPESystemIdentifierSingleQuoted;
+    } else {
+        parse_error("missing-quote-before-doctype-system-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::BogusDOCTYPE;
+    }
+}
+
+// DOCTYPE system keyword states (13.2.5.63-67)
+void Tokenizer::handle_after_doctype_system_keyword_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
+        m_state = TokenizerState::BeforeDOCTYPESystemIdentifier;
+    } else if (*cp == '"') {
+        parse_error("missing-whitespace-after-doctype-system-keyword"_s);
+        std::get<DoctypeToken>(*m_current_token).system_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPESystemIdentifierDoubleQuoted;
+    } else if (*cp == '\'') {
+        parse_error("missing-whitespace-after-doctype-system-keyword"_s);
+        std::get<DoctypeToken>(*m_current_token).system_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPESystemIdentifierSingleQuoted;
+    } else if (*cp == '>') {
+        parse_error("missing-doctype-system-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else {
+        parse_error("missing-quote-before-doctype-system-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::BogusDOCTYPE;
+    }
+}
+
+void Tokenizer::handle_before_doctype_system_identifier_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
+        // Ignore
+    } else if (*cp == '"') {
+        std::get<DoctypeToken>(*m_current_token).system_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPESystemIdentifierDoubleQuoted;
+    } else if (*cp == '\'') {
+        std::get<DoctypeToken>(*m_current_token).system_identifier = ""_s;
+        m_state = TokenizerState::DOCTYPESystemIdentifierSingleQuoted;
+    } else if (*cp == '>') {
+        parse_error("missing-doctype-system-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else {
+        parse_error("missing-quote-before-doctype-system-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::BogusDOCTYPE;
+    }
+}
+
+void Tokenizer::handle_doctype_system_identifier_double_quoted_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '"') {
+        m_state = TokenizerState::AfterDOCTYPESystemIdentifier;
+    } else if (*cp == '>') {
+        parse_error("abrupt-doctype-system-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else if (*cp == 0) {
+        parse_error("unexpected-null-character"_s);
+        auto& doctype = std::get<DoctypeToken>(*m_current_token);
+        if (doctype.system_identifier) {
+            *doctype.system_identifier = *doctype.system_identifier + String(1, static_cast<char>(0xFFFD));
+        }
+    } else {
+        auto& doctype = std::get<DoctypeToken>(*m_current_token);
+        if (doctype.system_identifier) {
+            *doctype.system_identifier = *doctype.system_identifier + String(1, static_cast<char>(*cp));
+        }
+    }
+}
+
+void Tokenizer::handle_doctype_system_identifier_single_quoted_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\'') {
+        m_state = TokenizerState::AfterDOCTYPESystemIdentifier;
+    } else if (*cp == '>') {
+        parse_error("abrupt-doctype-system-identifier"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else if (*cp == 0) {
+        parse_error("unexpected-null-character"_s);
+        auto& doctype = std::get<DoctypeToken>(*m_current_token);
+        if (doctype.system_identifier) {
+            *doctype.system_identifier = *doctype.system_identifier + String(1, static_cast<char>(0xFFFD));
+        }
+    } else {
+        auto& doctype = std::get<DoctypeToken>(*m_current_token);
+        if (doctype.system_identifier) {
+            *doctype.system_identifier = *doctype.system_identifier + String(1, static_cast<char>(*cp));
+        }
+    }
+}
+
+void Tokenizer::handle_after_doctype_system_identifier_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("eof-in-doctype"_s);
+        std::get<DoctypeToken>(*m_current_token).force_quirks = true;
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
+        // Ignore
+    } else if (*cp == '>') {
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else {
+        parse_error("unexpected-character-after-doctype-system-identifier"_s);
+        m_state = TokenizerState::BogusDOCTYPE;
+    }
+}
+
+void Tokenizer::handle_bogus_doctype_state() {
+    auto cp = peek();
+    if (!cp) {
+        emit_current_token();
+        emit_eof();
+        return;
+    }
+
+    consume();
+
+    if (*cp == '>') {
+        m_state = TokenizerState::Data;
+        emit_current_token();
+    } else if (*cp == 0) {
+        parse_error("unexpected-null-character"_s);
+        // Ignore
+    } else {
+        // Ignore
+    }
+}
+
+// Named character reference state (13.2.5.73)
+void Tokenizer::handle_named_character_reference_state() {
+    // Simplified: just treat as ambiguous ampersand for now
+    m_state = TokenizerState::AmbiguousAmpersand;
+}
+
+// Ambiguous ampersand state (13.2.5.74)
+void Tokenizer::handle_ambiguous_ampersand_state() {
+    auto cp = peek();
+    if (!cp) {
+        emit_character('&');
+        m_state = m_return_state;
+        return;
+    }
+
+    consume();
+
+    if (*cp == ';') {
+        parse_error("unknown-named-character-reference"_s);
+        m_state = m_return_state;
+    } else {
+        emit_character('&');
+        reconsume();
+        m_state = m_return_state;
+    }
+}
+
+// Numeric character reference states (13.2.5.75-80)
+void Tokenizer::handle_numeric_character_reference_state() {
+    // No digits found
+    parse_error("absence-of-digits-in-numeric-character-reference"_s);
+
+    // Flush buffer as character tokens
+    for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+        emit_character(m_temp_buffer.build()[i]);
+    }
+    m_state = m_return_state;
+}
+
+void Tokenizer::handle_hexadecimal_character_reference_start_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("absence-of-digits-in-numeric-character-reference"_s);
+        for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+            emit_character(m_temp_buffer.build()[i]);
+        }
+        m_state = m_return_state;
+        return;
+    }
+
+    if (std::isxdigit(*cp)) {
+        m_state = TokenizerState::HexadecimalCharacterReference;
+    } else {
+        parse_error("absence-of-digits-in-numeric-character-reference"_s);
+        for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+            emit_character(m_temp_buffer.build()[i]);
+        }
+        m_state = m_return_state;
+    }
+}
+
+void Tokenizer::handle_decimal_character_reference_start_state() {
+    auto cp = peek();
+    if (!cp) {
+        parse_error("absence-of-digits-in-numeric-character-reference"_s);
+        for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+            emit_character(m_temp_buffer.build()[i]);
+        }
+        m_state = m_return_state;
+        return;
+    }
+
+    if (std::isdigit(*cp)) {
+        m_state = TokenizerState::DecimalCharacterReference;
+    } else {
+        parse_error("absence-of-digits-in-numeric-character-reference"_s);
+        for (usize i = 0; i < m_temp_buffer.size(); ++i) {
+            emit_character(m_temp_buffer.build()[i]);
+        }
+        m_state = m_return_state;
+    }
+}
+
+void Tokenizer::handle_hexadecimal_character_reference_state() {
+    // Simplified implementation - need to accumulate character reference code
+    auto cp = peek();
+    if (!cp) {
+        parse_error("missing-semicolon-after-character-reference"_s);
+        m_state = TokenizerState::NumericCharacterReferenceEnd;
+        return;
+    }
+
+    consume();
+
+    if (std::isdigit(*cp)) {
+        // Add digit to character reference code (not implemented)
+    } else if (*cp == ';') {
+        m_state = TokenizerState::NumericCharacterReferenceEnd;
+    } else {
+        parse_error("missing-semicolon-after-character-reference"_s);
+        m_state = TokenizerState::NumericCharacterReferenceEnd;
+    }
+}
+
+void Tokenizer::handle_decimal_character_reference_state() {
+    // Simplified implementation
+    auto cp = peek();
+    if (!cp) {
+        parse_error("missing-semicolon-after-character-reference"_s);
+        m_state = TokenizerState::NumericCharacterReferenceEnd;
+        return;
+    }
+
+    consume();
+
+    if (std::isdigit(*cp)) {
+        // Add digit to character reference code (not implemented)
+    } else if (*cp == ';') {
+        m_state = TokenizerState::NumericCharacterReferenceEnd;
+    } else {
+        parse_error("missing-semicolon-after-character-reference"_s);
+        m_state = TokenizerState::NumericCharacterReferenceEnd;
+    }
+}
+
+void Tokenizer::handle_numeric_character_reference_end_state() {
+    // Flush buffer with resolved character reference
+    // For now, just emit '&' as fallback
+    emit_character('&');
+    m_state = m_return_state;
 }
 
 } // namespace lithium::html

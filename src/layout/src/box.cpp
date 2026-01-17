@@ -99,7 +99,8 @@ String LayoutBox::debug_string(i32 indent) const {
     oss << "]\n";
 
     for (const auto& child : m_children) {
-        oss << child->debug_string(indent + 1);
+        auto child_str = child->debug_string(indent + 1);
+        oss << child_str.c_str();
     }
 
     return String(oss.str());
@@ -135,12 +136,22 @@ std::unique_ptr<LayoutBox> LayoutTreeBuilder::build_box(
         case dom::NodeType::Element:
             return build_element_box(static_cast<dom::Element&>(node), resolver);
         case dom::NodeType::Text:
-            return build_text_box(
-                static_cast<dom::Text&>(node),
-                node.parent_node() ?
-                    resolver.get_computed_style(
-                        *static_cast<dom::Element*>(node.parent_node())) :
-                    css::ComputedValue{});
+            {
+                // Get parent style
+                const css::ComputedValue* parent_style = nullptr;
+                if (node.parent_node() && node.parent_node()->node_type() == dom::NodeType::Element) {
+                    parent_style = resolver.get_computed_style(
+                        *static_cast<dom::Element*>(node.parent_node()));
+                }
+                // Use default empty style if no parent
+                css::ComputedValue default_style{};
+                if (!parent_style) {
+                    parent_style = &default_style;
+                }
+                return build_text_box(
+                    static_cast<dom::Text&>(node),
+                    *parent_style);
+            }
         default:
             return nullptr;
     }
@@ -151,15 +162,18 @@ std::unique_ptr<LayoutBox> LayoutTreeBuilder::build_element_box(
     const css::StyleResolver& resolver) {
 
     auto computed = resolver.get_computed_style(element);
-
-    // Check display property
-    if (computed.display == css::Display::None) {
+    if (!computed) {
         return nullptr;
     }
 
-    BoxType type = determine_box_type(computed);
+    // Check display property
+    if (computed->display == css::Display::None) {
+        return nullptr;
+    }
+
+    BoxType type = determine_box_type(*computed);
     auto box = std::make_unique<LayoutBox>(type, &element);
-    box->set_style(computed);
+    box->set_style(*computed);
 
     // Build children
     for (auto* child = element.first_child(); child; child = child->next_sibling()) {

@@ -4,6 +4,7 @@
  */
 
 #include "lithium/html/parser.hpp"
+#include "lithium/dom/text.hpp"
 #include "lithium/core/logger.hpp"
 #include <iostream>
 #include <fstream>

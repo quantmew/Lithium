@@ -168,6 +168,7 @@ RefPtr<DocumentType> Document::create_document_type(
 {
     auto doctype = make_ref<DocumentType>(name, public_id, system_id);
     doctype->set_owner_document(this);
+    m_doctype = doctype;
     return doctype;
 }
 

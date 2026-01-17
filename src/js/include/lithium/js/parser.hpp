@@ -80,15 +80,15 @@ private:
     ExpressionPtr parse_array_expression();
     ExpressionPtr parse_object_expression();
     ExpressionPtr parse_function_expression();
-    ExpressionPtr parse_arrow_function_expression(std::vector<PatternPtr> params);
+    ExpressionPtr parse_arrow_function_expression(std::vector<ExpressionPtr> params);
     ExpressionPtr parse_class_expression();
     ExpressionPtr parse_template_literal();
 
-    // Pattern parsing (destructuring)
-    PatternPtr parse_pattern();
-    PatternPtr parse_array_pattern();
-    PatternPtr parse_object_pattern();
-    PatternPtr parse_binding_element();
+    // Pattern parsing (destructuring) - simplified to use Expression
+    ExpressionPtr parse_pattern();
+    ExpressionPtr parse_array_pattern();
+    ExpressionPtr parse_object_pattern();
+    ExpressionPtr parse_binding_element();
 
     // Helper methods
     [[nodiscard]] int get_binary_precedence(TokenType type) const;
@@ -98,7 +98,7 @@ private:
     [[nodiscard]] bool is_declaration_start() const;
     [[nodiscard]] bool could_be_arrow_function() const;
 
-    std::vector<PatternPtr> parse_formal_parameters();
+    std::vector<ExpressionPtr> parse_formal_parameters();
     std::vector<ExpressionPtr> parse_arguments();
     std::unique_ptr<Property> parse_property_definition();
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lithium/core/types.hpp"
+#include "lithium/css/style_resolver.hpp"
 #include "lithium/css/value.hpp"
 #include "lithium/dom/node.hpp"
 #include <memory>

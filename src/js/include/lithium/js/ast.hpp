@@ -4,19 +4,9 @@
 #include "lithium/core/string.hpp"
 #include <memory>
 #include <vector>
-#include <variant>
 #include <optional>
 
 namespace lithium::js {
-
-// Forward declarations
-struct Expression;
-struct Statement;
-struct Pattern;
-
-using ExpressionPtr = std::unique_ptr<Expression>;
-using StatementPtr = std::unique_ptr<Statement>;
-using PatternPtr = std::unique_ptr<Pattern>;
 
 // ============================================================================
 // Source Location
@@ -42,26 +32,34 @@ struct ASTNode {
 // Expressions
 // ============================================================================
 
+// Base expression class
+struct Expression : ASTNode {
+    virtual ~Expression() = default;
+};
+
+// Expression pointer type
+using ExpressionPtr = std::unique_ptr<Expression>;
+
 // Literal expressions
-struct NullLiteral : ASTNode {};
-struct BooleanLiteral : ASTNode { bool value; };
-struct NumericLiteral : ASTNode { f64 value; };
-struct StringLiteral : ASTNode { String value; };
-struct TemplateLiteral : ASTNode {
+struct NullLiteral : Expression {};
+struct BooleanLiteral : Expression { bool value; };
+struct NumericLiteral : Expression { f64 value; };
+struct StringLiteral : Expression { String value; };
+struct TemplateLiteral : Expression {
     std::vector<String> quasis;
     std::vector<ExpressionPtr> expressions;
 };
 
 // Identifier
-struct Identifier : ASTNode {
+struct Identifier : Expression {
     String name;
 };
 
 // This expression
-struct ThisExpression : ASTNode {};
+struct ThisExpression : Expression {};
 
 // Array/Object literals
-struct ArrayExpression : ASTNode {
+struct ArrayExpression : Expression {
     std::vector<std::optional<ExpressionPtr>> elements;  // null for holes
 };
 
@@ -75,36 +73,36 @@ struct Property : ASTNode {
     bool method{false};
 };
 
-struct ObjectExpression : ASTNode {
+struct ObjectExpression : Expression {
     std::vector<std::unique_ptr<Property>> properties;
 };
 
 // Function expression
-struct FunctionExpression : ASTNode {
+struct FunctionExpression : Expression {
     std::optional<String> name;
-    std::vector<PatternPtr> params;
-    StatementPtr body;
+    std::vector<ExpressionPtr> params;  // Changed from PatternPtr
+    ExpressionPtr body;  // Changed from StatementPtr
     bool is_async{false};
     bool is_generator{false};
 };
 
 // Arrow function
-struct ArrowFunctionExpression : ASTNode {
-    std::vector<PatternPtr> params;
-    std::variant<ExpressionPtr, StatementPtr> body;
+struct ArrowFunctionExpression : Expression {
+    std::vector<ExpressionPtr> params;
+    ExpressionPtr body;
     bool is_async{false};
     bool expression{false};  // body is expression vs block
 };
 
 // Class expression
-struct ClassExpression : ASTNode {
+struct ClassExpression : Expression {
     std::optional<String> name;
     ExpressionPtr super_class;
     std::vector<std::unique_ptr<Property>> body;
 };
 
 // Member expression
-struct MemberExpression : ASTNode {
+struct MemberExpression : Expression {
     ExpressionPtr object;
     ExpressionPtr property;
     bool computed{false};
@@ -112,20 +110,20 @@ struct MemberExpression : ASTNode {
 };
 
 // Call expression
-struct CallExpression : ASTNode {
+struct CallExpression : Expression {
     ExpressionPtr callee;
     std::vector<ExpressionPtr> arguments;
     bool optional{false};
 };
 
 // New expression
-struct NewExpression : ASTNode {
+struct NewExpression : Expression {
     ExpressionPtr callee;
     std::vector<ExpressionPtr> arguments;
 };
 
 // Unary expression
-struct UnaryExpression : ASTNode {
+struct UnaryExpression : Expression {
     enum class Operator {
         Minus, Plus, Not, BitwiseNot, Typeof, Void, Delete
     };
@@ -135,7 +133,7 @@ struct UnaryExpression : ASTNode {
 };
 
 // Update expression (++/--)
-struct UpdateExpression : ASTNode {
+struct UpdateExpression : Expression {
     enum class Operator { Increment, Decrement };
     Operator op;
     ExpressionPtr argument;
@@ -143,7 +141,7 @@ struct UpdateExpression : ASTNode {
 };
 
 // Binary expression
-struct BinaryExpression : ASTNode {
+struct BinaryExpression : Expression {
     enum class Operator {
         Add, Subtract, Multiply, Divide, Modulo, Exponent,
         Equal, NotEqual, StrictEqual, StrictNotEqual,
@@ -158,7 +156,7 @@ struct BinaryExpression : ASTNode {
 };
 
 // Logical expression
-struct LogicalExpression : ASTNode {
+struct LogicalExpression : Expression {
     enum class Operator { And, Or, NullishCoalescing };
     Operator op;
     ExpressionPtr left;
@@ -166,14 +164,14 @@ struct LogicalExpression : ASTNode {
 };
 
 // Conditional expression (ternary)
-struct ConditionalExpression : ASTNode {
+struct ConditionalExpression : Expression {
     ExpressionPtr test;
     ExpressionPtr consequent;
     ExpressionPtr alternate;
 };
 
 // Assignment expression
-struct AssignmentExpression : ASTNode {
+struct AssignmentExpression : Expression {
     enum class Operator {
         Assign, AddAssign, SubtractAssign, MultiplyAssign, DivideAssign,
         ModuloAssign, ExponentAssign, LeftShiftAssign, RightShiftAssign,
@@ -181,134 +179,104 @@ struct AssignmentExpression : ASTNode {
         BitwiseXorAssign, LogicalAndAssign, LogicalOrAssign, NullishAssign
     };
     Operator op;
-    std::variant<ExpressionPtr, PatternPtr> left;
+    ExpressionPtr left;
     ExpressionPtr right;
 };
 
 // Sequence expression
-struct SequenceExpression : ASTNode {
+struct SequenceExpression : Expression {
     std::vector<ExpressionPtr> expressions;
 };
 
 // Spread element
-struct SpreadElement : ASTNode {
+struct SpreadElement : Expression {
     ExpressionPtr argument;
 };
 
-// Expression variant
-using Expression = std::variant<
-    NullLiteral, BooleanLiteral, NumericLiteral, StringLiteral, TemplateLiteral,
-    Identifier, ThisExpression, ArrayExpression, ObjectExpression,
-    FunctionExpression, ArrowFunctionExpression, ClassExpression,
-    MemberExpression, CallExpression, NewExpression,
-    UnaryExpression, UpdateExpression, BinaryExpression, LogicalExpression,
-    ConditionalExpression, AssignmentExpression, SequenceExpression, SpreadElement
->;
-
 // ============================================================================
-// Patterns (for destructuring)
+// Patterns (for destructuring) - simplified to use Expression
 // ============================================================================
-
-struct ArrayPattern : ASTNode {
-    std::vector<std::optional<PatternPtr>> elements;
-};
-
-struct ObjectPatternProperty : ASTNode {
-    ExpressionPtr key;
-    PatternPtr value;
-    bool computed{false};
-    bool shorthand{false};
-};
-
-struct ObjectPattern : ASTNode {
-    std::vector<std::unique_ptr<ObjectPatternProperty>> properties;
-};
-
-struct AssignmentPattern : ASTNode {
-    PatternPtr left;
-    ExpressionPtr right;
-};
-
-struct RestElement : ASTNode {
-    PatternPtr argument;
-};
-
-using Pattern = std::variant<
-    Identifier, ArrayPattern, ObjectPattern, AssignmentPattern, RestElement
->;
 
 // ============================================================================
 // Statements
 // ============================================================================
 
-struct EmptyStatement : ASTNode {};
+// Base statement class
+struct Statement : ASTNode {
+    virtual ~Statement() = default;
+};
 
-struct ExpressionStatement : ASTNode {
+// Statement pointer type
+using StatementPtr = std::unique_ptr<Statement>;
+
+struct EmptyStatement : Statement {};
+
+struct ExpressionStatement : Statement {
     ExpressionPtr expression;
 };
 
-struct BlockStatement : ASTNode {
+struct BlockStatement : Statement {
     std::vector<StatementPtr> body;
 };
 
-struct IfStatement : ASTNode {
+struct IfStatement : Statement {
     ExpressionPtr test;
     StatementPtr consequent;
     StatementPtr alternate;
 };
 
-struct WhileStatement : ASTNode {
+struct WhileStatement : Statement {
     ExpressionPtr test;
     StatementPtr body;
 };
 
-struct DoWhileStatement : ASTNode {
+struct DoWhileStatement : Statement {
     StatementPtr body;
     ExpressionPtr test;
 };
 
-struct ForStatement : ASTNode {
+struct ForStatement : Statement {
     std::variant<std::monostate, StatementPtr, ExpressionPtr> init;
     ExpressionPtr test;
     ExpressionPtr update;
     StatementPtr body;
 };
 
-struct ForInStatement : ASTNode {
-    std::variant<PatternPtr, ExpressionPtr> left;
+struct ForInStatement : Statement {
+    ExpressionPtr left;
     ExpressionPtr right;
     StatementPtr body;
 };
 
-struct ForOfStatement : ASTNode {
-    std::variant<PatternPtr, ExpressionPtr> left;
+struct ForOfStatement : Statement {
+    ExpressionPtr left;
     ExpressionPtr right;
     StatementPtr body;
     bool is_await{false};
 };
 
-struct BreakStatement : ASTNode {
+struct BreakStatement : Statement {
     std::optional<String> label;
 };
 
-struct ContinueStatement : ASTNode {
+struct ContinueStatement : Statement {
     std::optional<String> label;
 };
 
-struct ReturnStatement : ASTNode {
+struct ReturnStatement : Statement {
     ExpressionPtr argument;
 };
 
-struct ThrowStatement : ASTNode {
+struct ThrowStatement : Statement {
     ExpressionPtr argument;
 };
 
 struct CatchClause : ASTNode {
-    PatternPtr param;
+    ExpressionPtr param;
     std::unique_ptr<BlockStatement> body;
 };
 
-struct TryStatement : ASTNode {
+struct TryStatement : Statement {
     std::unique_ptr<BlockStatement> block;
     std::unique_ptr<CatchClause> handler;
     std::unique_ptr<BlockStatement> finalizer;
@@ -319,52 +287,43 @@ struct SwitchCase : ASTNode {
     std::vector<StatementPtr> consequent;
 };
 
-struct SwitchStatement : ASTNode {
+struct SwitchStatement : Statement {
     ExpressionPtr discriminant;
     std::vector<std::unique_ptr<SwitchCase>> cases;
 };
 
-struct LabeledStatement : ASTNode {
+struct LabeledStatement : Statement {
     String label;
     StatementPtr body;
 };
 
-struct DebuggerStatement : ASTNode {};
+struct DebuggerStatement : Statement {};
 
 // Declarations
 struct VariableDeclarator : ASTNode {
-    PatternPtr id;
+    ExpressionPtr id;
     ExpressionPtr init;
 };
 
-struct VariableDeclaration : ASTNode {
+struct VariableDeclaration : Statement {
     enum class Kind { Var, Let, Const };
     Kind kind;
     std::vector<std::unique_ptr<VariableDeclarator>> declarations;
 };
 
-struct FunctionDeclaration : ASTNode {
+struct FunctionDeclaration : Statement {
     String name;
-    std::vector<PatternPtr> params;
+    std::vector<ExpressionPtr> params;
     std::unique_ptr<BlockStatement> body;
     bool is_async{false};
     bool is_generator{false};
 };
 
-struct ClassDeclaration : ASTNode {
+struct ClassDeclaration : Statement {
     String name;
     ExpressionPtr super_class;
     std::vector<std::unique_ptr<Property>> body;
 };
-
-using Statement = std::variant<
-    EmptyStatement, ExpressionStatement, BlockStatement,
-    IfStatement, WhileStatement, DoWhileStatement,
-    ForStatement, ForInStatement, ForOfStatement,
-    BreakStatement, ContinueStatement, ReturnStatement, ThrowStatement,
-    TryStatement, SwitchStatement, LabeledStatement, DebuggerStatement,
-    VariableDeclaration, FunctionDeclaration, ClassDeclaration
->;
 
 // ============================================================================
 // Program (root node)

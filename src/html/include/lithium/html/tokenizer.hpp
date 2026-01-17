@@ -228,7 +228,57 @@ private:
     void handle_doctype_name_state();
     void handle_after_doctype_name_state();
     void handle_character_reference_state();
-    // ... more state handlers
+
+    // Additional state handlers (HTML5 spec 13.2.5)
+    void handle_rcdata_less_than_sign_state();
+    void handle_rcdata_end_tag_open_state();
+    void handle_rcdata_end_tag_name_state();
+    void handle_rawtext_less_than_sign_state();
+    void handle_rawtext_end_tag_open_state();
+    void handle_rawtext_end_tag_name_state();
+    void handle_script_data_less_than_sign_state();
+    void handle_script_data_end_tag_open_state();
+    void handle_script_data_end_tag_name_state();
+    void handle_script_data_escape_start_state();
+    void handle_script_data_escape_start_dash_state();
+    void handle_script_data_escaped_state();
+    void handle_script_data_escaped_dash_state();
+    void handle_script_data_escaped_dash_dash_state();
+    void handle_script_data_escaped_less_than_sign_state();
+    void handle_script_data_escaped_end_tag_open_state();
+    void handle_script_data_escaped_end_tag_name_state();
+    void handle_script_data_double_escape_start_state();
+    void handle_script_data_double_escaped_state();
+    void handle_script_data_double_escaped_dash_state();
+    void handle_script_data_double_escaped_dash_dash_state();
+    void handle_script_data_double_escaped_less_than_sign_state();
+    void handle_script_data_double_escape_end_state();
+    void handle_comment_start_dash_state();
+    void handle_comment_less_than_sign_state();
+    void handle_comment_less_than_sign_bang_state();
+    void handle_comment_less_than_sign_bang_dash_state();
+    void handle_comment_less_than_sign_bang_dash_dash_state();
+    void handle_comment_end_bang_state();
+    void handle_after_doctype_public_keyword_state();
+    void handle_before_doctype_public_identifier_state();
+    void handle_doctype_public_identifier_double_quoted_state();
+    void handle_doctype_public_identifier_single_quoted_state();
+    void handle_after_doctype_public_identifier_state();
+    void handle_between_doctype_public_and_system_identifiers_state();
+    void handle_after_doctype_system_keyword_state();
+    void handle_before_doctype_system_identifier_state();
+    void handle_doctype_system_identifier_double_quoted_state();
+    void handle_doctype_system_identifier_single_quoted_state();
+    void handle_after_doctype_system_identifier_state();
+    void handle_bogus_doctype_state();
+    void handle_named_character_reference_state();
+    void handle_ambiguous_ampersand_state();
+    void handle_numeric_character_reference_state();
+    void handle_hexadecimal_character_reference_start_state();
+    void handle_decimal_character_reference_start_state();
+    void handle_hexadecimal_character_reference_state();
+    void handle_decimal_character_reference_state();
+    void handle_numeric_character_reference_end_state();
 
     // Character reference handling
     unicode::CodePoint consume_character_reference();

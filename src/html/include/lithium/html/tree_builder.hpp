@@ -148,7 +148,11 @@ private:
 
     // Foster parenting
     void set_foster_parenting(bool enabled) { m_foster_parenting = enabled; }
-    [[nodiscard]] dom::Node* appropriate_insertion_place();
+    struct InsertionLocation {
+        dom::Node* parent{nullptr};
+        dom::Node* insert_before{nullptr};
+    };
+    [[nodiscard]] InsertionLocation appropriate_insertion_place();
 
     // Implicit end tags
     void generate_implied_end_tags(const String& except = String());
