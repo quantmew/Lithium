@@ -5,7 +5,12 @@ lithium_add_module(js
         src/lexer.cpp
         src/parser.cpp
         src/ast.cpp
-        src/compiler.cpp
+        src/compiler/compiler_core.cpp
+        src/compiler/compiler_emit.cpp
+        src/compiler/compiler_scope.cpp
+        src/compiler/compiler_statements.cpp
+        src/compiler/compiler_expressions.cpp
+        src/compiler/compiler_patterns.cpp
         src/bytecode.cpp
         src/vm.cpp
         src/value.cpp

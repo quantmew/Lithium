@@ -256,3 +256,39 @@ TEST_F(HTMLParserTest, TableCharactersAreFosterParented) {
         EXPECT_EQ(first_in_table->tag_name(), String("tr"));
     }
 }
+
+TEST_F(HTMLParserTest, CharacterReferencesAreResolved) {
+    auto doc = parse("<div title=\"Tom &amp; Jerry\">&lt;span&gt;&#x41;&#65;</div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+    EXPECT_EQ(div->get_attribute("title"_s).value_or(String()), String("Tom & Jerry"));
+    EXPECT_EQ(div->text_content(), String("<span>AA"));
+}
+
+TEST_F(HTMLParserTest, RcdataAndRawtextEndTagsAllowTrailingWhitespace) {
+    auto doc = parse("<textarea>value</textarea   ><script>var x = 1;</script   ><p>after</p>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+
+    auto* textarea = body->first_element_child();
+    ASSERT_NE(textarea, nullptr);
+    EXPECT_EQ(textarea->tag_name(), String("textarea"));
+    EXPECT_EQ(textarea->text_content(), String("value"));
+
+    ASSERT_TRUE(textarea->next_sibling()->is_element());
+    auto* script = textarea->next_sibling()->as_element();
+    ASSERT_NE(script, nullptr);
+    EXPECT_EQ(script->tag_name(), String("script"));
+    EXPECT_EQ(script->text_content(), String("var x = 1;"));
+
+    ASSERT_TRUE(script->next_sibling()->is_element());
+    auto* p = script->next_sibling()->as_element();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->tag_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("after"));
+}

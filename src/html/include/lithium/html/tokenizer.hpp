@@ -271,6 +271,9 @@ private:
     void handle_doctype_system_identifier_single_quoted_state();
     void handle_after_doctype_system_identifier_state();
     void handle_bogus_doctype_state();
+    void handle_cdata_section_state();
+    void handle_cdata_section_bracket_state();
+    void handle_cdata_section_end_state();
     void handle_named_character_reference_state();
     void handle_ambiguous_ampersand_state();
     void handle_numeric_character_reference_state();
@@ -308,6 +311,7 @@ private:
     String m_current_attribute_name;
     String m_current_attribute_value;
     String m_last_start_tag_name;
+    u32 m_character_reference_code{0};
 
     // Callbacks
     TokenCallback m_token_callback;
