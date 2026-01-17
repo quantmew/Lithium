@@ -14,6 +14,7 @@ protected:
         std::vector<Token> tokens;
         Lexer lexer;
         lexer.set_input(source);
+        lexer.set_allow_regexp(false);
 
         while (true) {
             Token token = lexer.next_token();
@@ -142,7 +143,7 @@ TEST_F(JSLexerTest, Comments) {
 
 TEST_F(JSLexerTest, LineTerminator) {
     Lexer lexer;
-    lexer.set_input("a\nb");
+    lexer.set_input("a\nb"_s);
 
     Token a = lexer.next_token();
     Token b = lexer.next_token();
@@ -179,4 +180,21 @@ TEST_F(JSLexerTest, ClassKeyword) {
     EXPECT_EQ(tokens[1].type, TokenType::Identifier);
     EXPECT_EQ(tokens[2].type, TokenType::Extends);
     EXPECT_EQ(tokens[3].type, TokenType::Identifier);
+}
+
+TEST_F(JSLexerTest, DistinguishesRegExpFromDivisionWithContext) {
+    Lexer lexer;
+    lexer.set_input("/abc/i 1 / 2"_s);
+    lexer.set_allow_regexp(true);
+
+    Token first = lexer.next_token();
+    EXPECT_EQ(first.type, TokenType::RegExp);
+    EXPECT_EQ(first.value, String("abc"));
+    EXPECT_EQ(first.regex_flags, String("i"));
+
+    lexer.set_allow_regexp(false);
+    Token number = lexer.next_token();
+    EXPECT_EQ(number.type, TokenType::Number);
+    Token slash = lexer.next_token();
+    EXPECT_EQ(slash.type, TokenType::Slash);
 }

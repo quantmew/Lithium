@@ -149,6 +149,7 @@ struct Token {
     usize column{1};
     usize start{0};
     usize end{0};
+    String regex_flags;
 
     // Flags
     bool preceded_by_line_terminator{false};
@@ -174,6 +175,7 @@ public:
     void set_input(std::string_view source);
 
     void set_error_callback(ErrorCallback callback) { m_error_callback = std::move(callback); }
+    void set_allow_regexp(bool allowed) { m_allow_regexp = allowed; }
 
     // Get next token
     [[nodiscard]] Token next_token();
@@ -237,6 +239,7 @@ private:
     // State
     bool m_template_mode{false};
     bool m_line_terminator_before{false};
+    bool m_allow_regexp{true};
 
     // Peeked token
     std::optional<Token> m_peeked;

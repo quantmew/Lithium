@@ -3,8 +3,8 @@
 #include "lithium/core/types.hpp"
 #include "lithium/core/string.hpp"
 #include <memory>
-#include <vector>
 #include <optional>
+#include <vector>
 
 namespace lithium::js {
 
@@ -19,6 +19,10 @@ struct SourceLocation {
     usize end_column{0};
 };
 
+// Forward declarations
+struct Statement;
+using StatementPtr = std::unique_ptr<Statement>;
+
 // ============================================================================
 // AST Node Base
 // ============================================================================
@@ -32,76 +36,47 @@ struct ASTNode {
 // Expressions
 // ============================================================================
 
-// Base expression class
 struct Expression : ASTNode {
     virtual ~Expression() = default;
 };
 
-// Expression pointer type
 using ExpressionPtr = std::unique_ptr<Expression>;
 
-// Literal expressions
+// Literals
 struct NullLiteral : Expression {};
-struct BooleanLiteral : Expression { bool value; };
-struct NumericLiteral : Expression { f64 value; };
+struct BooleanLiteral : Expression { bool value{false}; };
+struct NumericLiteral : Expression { f64 value{0}; };
 struct StringLiteral : Expression { String value; };
-struct TemplateLiteral : Expression {
-    std::vector<String> quasis;
-    std::vector<ExpressionPtr> expressions;
+struct RegExpLiteral : Expression {
+    String pattern;
+    String flags;
 };
+
+struct ThisExpression : Expression {};
 
 // Identifier
 struct Identifier : Expression {
     String name;
 };
 
-// This expression
-struct ThisExpression : Expression {};
-
-// Array/Object literals
+// Arrays and objects
 struct ArrayExpression : Expression {
-    std::vector<std::optional<ExpressionPtr>> elements;  // null for holes
+    std::vector<ExpressionPtr> elements;
 };
 
-struct Property : ASTNode {
-    enum class Kind { Init, Get, Set };
-    Kind kind{Kind::Init};
-    ExpressionPtr key;
+struct ObjectProperty : ASTNode {
+    String key;
     ExpressionPtr value;
+    ExpressionPtr computed_key;
     bool computed{false};
-    bool shorthand{false};
-    bool method{false};
+    bool spread{false};
 };
 
 struct ObjectExpression : Expression {
-    std::vector<std::unique_ptr<Property>> properties;
+    std::vector<ObjectProperty> properties;
 };
 
-// Function expression
-struct FunctionExpression : Expression {
-    std::optional<String> name;
-    std::vector<ExpressionPtr> params;  // Changed from PatternPtr
-    ExpressionPtr body;  // Changed from StatementPtr
-    bool is_async{false};
-    bool is_generator{false};
-};
-
-// Arrow function
-struct ArrowFunctionExpression : Expression {
-    std::vector<ExpressionPtr> params;
-    ExpressionPtr body;
-    bool is_async{false};
-    bool expression{false};  // body is expression vs block
-};
-
-// Class expression
-struct ClassExpression : Expression {
-    std::optional<String> name;
-    ExpressionPtr super_class;
-    std::vector<std::unique_ptr<Property>> body;
-};
-
-// Member expression
+// Member / Call
 struct MemberExpression : Expression {
     ExpressionPtr object;
     ExpressionPtr property;
@@ -109,105 +84,129 @@ struct MemberExpression : Expression {
     bool optional{false};
 };
 
-// Call expression
 struct CallExpression : Expression {
     ExpressionPtr callee;
     std::vector<ExpressionPtr> arguments;
     bool optional{false};
 };
 
-// New expression
-struct NewExpression : Expression {
-    ExpressionPtr callee;
-    std::vector<ExpressionPtr> arguments;
-};
-
-// Unary expression
+// Unary / Binary / Logical
 struct UnaryExpression : Expression {
-    enum class Operator {
-        Minus, Plus, Not, BitwiseNot, Typeof, Void, Delete
-    };
-    Operator op;
+    enum class Operator { Plus, Minus, Not, Typeof, Void, Delete, Await, BitwiseNot };
+    Operator op{Operator::Plus};
     ExpressionPtr argument;
-    bool prefix{true};
 };
 
-// Update expression (++/--)
-struct UpdateExpression : Expression {
-    enum class Operator { Increment, Decrement };
-    Operator op;
-    ExpressionPtr argument;
-    bool prefix;
-};
-
-// Binary expression
 struct BinaryExpression : Expression {
     enum class Operator {
-        Add, Subtract, Multiply, Divide, Modulo, Exponent,
-        Equal, NotEqual, StrictEqual, StrictNotEqual,
-        LessThan, LessEqual, GreaterThan, GreaterEqual,
-        LeftShift, RightShift, UnsignedRightShift,
-        BitwiseAnd, BitwiseOr, BitwiseXor,
-        In, Instanceof
+        Add,
+        Subtract,
+        Multiply,
+        Divide,
+        Modulo,
+        Equal,
+        NotEqual,
+        StrictEqual,
+        StrictNotEqual,
+        LessThan,
+        LessEqual,
+        GreaterThan,
+        GreaterEqual,
+        LeftShift,
+        RightShift,
+        UnsignedRightShift,
+        BitwiseAnd,
+        BitwiseOr,
+        BitwiseXor,
+        Exponent,
+        Instanceof,
+        In
     };
-    Operator op;
+    Operator op{Operator::Add};
     ExpressionPtr left;
     ExpressionPtr right;
 };
 
-// Logical expression
 struct LogicalExpression : Expression {
     enum class Operator { And, Or, NullishCoalescing };
-    Operator op;
+    Operator op{Operator::And};
     ExpressionPtr left;
     ExpressionPtr right;
 };
 
-// Conditional expression (ternary)
+struct AssignmentExpression : Expression {
+    enum class Operator {
+        Assign,
+        AddAssign,
+        SubtractAssign,
+        MultiplyAssign,
+        DivideAssign,
+        ModuloAssign,
+        ExponentAssign,
+        LeftShiftAssign,
+        RightShiftAssign,
+        UnsignedRightShiftAssign,
+        BitwiseAndAssign,
+        BitwiseOrAssign,
+        BitwiseXorAssign,
+        LogicalAndAssign,
+        LogicalOrAssign,
+        NullishAssign
+    };
+    Operator op{Operator::Assign};
+    ExpressionPtr left;
+    ExpressionPtr right;
+};
+
 struct ConditionalExpression : Expression {
     ExpressionPtr test;
     ExpressionPtr consequent;
     ExpressionPtr alternate;
 };
 
-// Assignment expression
-struct AssignmentExpression : Expression {
-    enum class Operator {
-        Assign, AddAssign, SubtractAssign, MultiplyAssign, DivideAssign,
-        ModuloAssign, ExponentAssign, LeftShiftAssign, RightShiftAssign,
-        UnsignedRightShiftAssign, BitwiseAndAssign, BitwiseOrAssign,
-        BitwiseXorAssign, LogicalAndAssign, LogicalOrAssign, NullishAssign
-    };
-    Operator op;
-    ExpressionPtr left;
-    ExpressionPtr right;
+// Function expressions (including arrow functions)
+struct FunctionExpression : Expression {
+    std::optional<String> name;
+    std::vector<String> params;
+    std::vector<StatementPtr> body;
+    bool is_arrow{false};
+    bool expression_body{false};
+    ExpressionPtr concise_body;
 };
 
-// Sequence expression
-struct SequenceExpression : Expression {
-    std::vector<ExpressionPtr> expressions;
+struct UpdateExpression : Expression {
+    enum class Operator { Increment, Decrement };
+    Operator op{Operator::Increment};
+    ExpressionPtr argument;
+    bool prefix{false};
 };
 
-// Spread element
+struct NewExpression : Expression {
+    ExpressionPtr callee;
+    std::vector<ExpressionPtr> arguments;
+};
+
 struct SpreadElement : Expression {
     ExpressionPtr argument;
 };
 
-// ============================================================================
-// Patterns (for destructuring) - simplified to use Expression
-// ============================================================================
+struct TemplateElement : ASTNode {
+    String value;
+    bool tail{false};
+};
+
+struct TemplateLiteral : Expression {
+    std::vector<TemplateElement> quasis;
+    std::vector<ExpressionPtr> expressions;
+};
 
 // ============================================================================
 // Statements
 // ============================================================================
 
-// Base statement class
 struct Statement : ASTNode {
     virtual ~Statement() = default;
 };
-
-// Statement pointer type
-using StatementPtr = std::unique_ptr<Statement>;
 
 struct EmptyStatement : Statement {};
 
@@ -217,6 +216,35 @@ struct ExpressionStatement : Statement {
 
 struct BlockStatement : Statement {
     std::vector<StatementPtr> body;
+};
+
+struct VariableDeclarator : ASTNode {
+    String id;
+    ExpressionPtr init;
+};
+
+struct VariableDeclaration : Statement {
+    enum class Kind { Var, Let, Const };
+    Kind kind{Kind::Var};
+    std::vector<VariableDeclarator> declarations;
+};
+
+struct FunctionDeclaration : Statement {
+    String name;
+    std::vector<String> params;
+    std::vector<StatementPtr> body;
+};
+
+struct ReturnStatement : Statement {
+    ExpressionPtr argument;
+};
+
+struct BreakStatement : Statement {
+    std::optional<String> label;
+};
+
+struct ContinueStatement : Statement {
+    std::optional<String> label;
 };
 
 struct IfStatement : Statement {
@@ -236,93 +264,83 @@ struct DoWhileStatement : Statement {
 };
 
 struct ForStatement : Statement {
-    std::variant<std::monostate, StatementPtr, ExpressionPtr> init;
+    StatementPtr init_statement;
+    ExpressionPtr init_expression;
     ExpressionPtr test;
     ExpressionPtr update;
     StatementPtr body;
 };
 
-struct ForInStatement : Statement {
-    ExpressionPtr left;
-    ExpressionPtr right;
-    StatementPtr body;
+struct SwitchCase : ASTNode {
+    ExpressionPtr test; // null for default
+    std::vector<StatementPtr> consequent;
 };
 
-struct ForOfStatement : Statement {
-    ExpressionPtr left;
-    ExpressionPtr right;
-    StatementPtr body;
-    bool is_await{false};
-};
-
-struct BreakStatement : Statement {
-    std::optional<String> label;
-};
-
-struct ContinueStatement : Statement {
-    std::optional<String> label;
-};
-
-struct ReturnStatement : Statement {
-    ExpressionPtr argument;
+struct SwitchStatement : Statement {
+    ExpressionPtr discriminant;
+    std::vector<SwitchCase> cases;
 };
 
 struct ThrowStatement : Statement {
     ExpressionPtr argument;
 };
 
-struct CatchClause : ASTNode {
-    ExpressionPtr param;
-    std::unique_ptr<BlockStatement> body;
-};
-
 struct TryStatement : Statement {
-    std::unique_ptr<BlockStatement> block;
-    std::unique_ptr<CatchClause> handler;
-    std::unique_ptr<BlockStatement> finalizer;
+    StatementPtr block;
+    String handler_param;
+    StatementPtr handler;
+    StatementPtr finalizer;
 };
 
-struct SwitchCase : ASTNode {
-    ExpressionPtr test;  // null for default
-    std::vector<StatementPtr> consequent;
-};
-
-struct SwitchStatement : Statement {
-    ExpressionPtr discriminant;
-    std::vector<std::unique_ptr<SwitchCase>> cases;
-};
-
-struct LabeledStatement : Statement {
-    String label;
+struct WithStatement : Statement {
+    ExpressionPtr object;
     StatementPtr body;
 };
 
-struct DebuggerStatement : Statement {};
-
-// Declarations
-struct VariableDeclarator : ASTNode {
-    ExpressionPtr id;
-    ExpressionPtr init;
-};
-
-struct VariableDeclaration : Statement {
-    enum class Kind { Var, Let, Const };
-    Kind kind;
-    std::vector<std::unique_ptr<VariableDeclarator>> declarations;
-};
-
-struct FunctionDeclaration : Statement {
-    String name;
-    std::vector<ExpressionPtr> params;
-    std::unique_ptr<BlockStatement> body;
-    bool is_async{false};
-    bool is_generator{false};
+struct ClassMethod : ASTNode {
+    String key;
+    std::vector<String> params;
+    std::vector<StatementPtr> body;
+    bool is_static{false};
 };
 
 struct ClassDeclaration : Statement {
     String name;
     ExpressionPtr super_class;
-    std::vector<std::unique_ptr<Property>> body;
+    std::vector<ClassMethod> body;
+};
+
+struct ImportSpecifier : ASTNode {
+    String imported;
+    String local;
+    bool is_default{false};
+    bool is_namespace{false};
+};
+
+struct ImportDeclaration : Statement {
+    std::vector<ImportSpecifier> specifiers;
+    String source;
+};
+
+struct ExportSpecifier : ASTNode {
+    String local;
+    String exported;
+};
+
+struct ExportNamedDeclaration : Statement {
+    std::vector<ExportSpecifier> specifiers;
+    StatementPtr declaration;
+    String source;
+};
+
+struct ExportDefaultDeclaration : Statement {
+    StatementPtr declaration;
+    ExpressionPtr expression;
+};
+
+struct ExportAllDeclaration : Statement {
+    String source;
+    String exported_as;
 };
 
 // ============================================================================
@@ -330,8 +348,6 @@ struct ClassDeclaration : Statement {
 // ============================================================================
 
 struct Program : ASTNode {
-    enum class SourceType { Script, Module };
-    SourceType source_type{SourceType::Script};
     std::vector<StatementPtr> body;
 };
 

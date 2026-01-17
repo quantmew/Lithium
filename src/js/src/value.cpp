@@ -5,8 +5,8 @@
 #include "lithium/js/value.hpp"
 #include "lithium/js/object.hpp"
 #include <cmath>
-#include <sstream>
 #include <limits>
+#include <sstream>
 
 namespace lithium::js {
 
@@ -39,9 +39,7 @@ Value::Value(const String& s) : m_type(ValueType::String) {
 }
 
 Value::Value(Object* obj) : m_type(ValueType::Object) {
-    // Note: This takes a raw pointer, caller must ensure object lifetime
-    // This is mainly for internal use
-    m_object = std::shared_ptr<Object>(obj, [](Object*) {}); // Non-owning
+    m_object = std::shared_ptr<Object>(obj, [](Object*) {});
 }
 
 Value::Value(std::shared_ptr<Object> obj) : m_type(ValueType::Object) {
@@ -53,15 +51,19 @@ Value::Value(std::shared_ptr<Object> obj) : m_type(ValueType::Object) {
 // ============================================================================
 
 bool Value::is_function() const {
+    return is_callable();
+}
+
+bool Value::is_callable() const {
     return is_object() && m_object && m_object->is_callable();
 }
 
-bool Value::is_array() const {
-    return is_object() && m_object && m_object->is_array();
+bool Value::is_native_function() const {
+    return dynamic_cast<NativeFunction*>(as_object()) != nullptr;
 }
 
-bool Value::is_class() const {
-    return is_object() && m_object && m_object->is_class();
+bool Value::is_array() const {
+    return dynamic_cast<Array*>(as_object()) != nullptr;
 }
 
 // ============================================================================
@@ -95,6 +97,10 @@ Object* Value::as_object() const {
         return nullptr;
     }
     return m_object.get();
+}
+
+NativeFunction* Value::as_native_function() const {
+    return dynamic_cast<NativeFunction*>(as_object());
 }
 
 // ============================================================================
@@ -134,13 +140,12 @@ f64 Value::to_number() const {
                 return 0.0;
             }
             try {
-                return std::stod(std::string(m_string->data(), m_string->size()));
+                return std::stod(m_string->std_string());
             } catch (...) {
                 return std::numeric_limits<f64>::quiet_NaN();
             }
         }
         case ValueType::Object:
-            // ToPrimitive then ToNumber - simplified
             return std::numeric_limits<f64>::quiet_NaN();
         default:
             return std::numeric_limits<f64>::quiet_NaN();
@@ -152,7 +157,6 @@ i32 Value::to_int32() const {
     if (std::isnan(num) || std::isinf(num) || num == 0) {
         return 0;
     }
-    // Truncate and wrap to 32-bit signed
     i64 int64 = static_cast<i64>(std::trunc(num));
     return static_cast<i32>(int64);
 }
@@ -162,7 +166,6 @@ u32 Value::to_uint32() const {
     if (std::isnan(num) || std::isinf(num) || num == 0) {
         return 0;
     }
-    // Truncate and wrap to 32-bit unsigned
     i64 int64 = static_cast<i64>(std::trunc(num));
     return static_cast<u32>(int64);
 }
@@ -211,7 +214,6 @@ bool Value::strict_equals(const Value& other) const {
         case ValueType::Boolean:
             return m_primitive.boolean == other.m_primitive.boolean;
         case ValueType::Number: {
-            // NaN is not equal to itself
             if (std::isnan(m_primitive.number) || std::isnan(other.m_primitive.number)) {
                 return false;
             }
@@ -227,17 +229,14 @@ bool Value::strict_equals(const Value& other) const {
 }
 
 bool Value::loose_equals(const Value& other) const {
-    // Same type - use strict equality
     if (m_type == other.m_type) {
         return strict_equals(other);
     }
 
-    // null == undefined
     if ((is_null() && other.is_undefined()) || (is_undefined() && other.is_null())) {
         return true;
     }
 
-    // Number comparisons
     if (is_number() && other.is_string()) {
         return m_primitive.number == other.to_number();
     }
@@ -245,7 +244,6 @@ bool Value::loose_equals(const Value& other) const {
         return to_number() == other.m_primitive.number;
     }
 
-    // Boolean to number
     if (is_boolean()) {
         return Value(to_number()).loose_equals(other);
     }
@@ -253,13 +251,11 @@ bool Value::loose_equals(const Value& other) const {
         return loose_equals(Value(other.to_number()));
     }
 
-    // Object to primitive
     if (is_object() && (other.is_string() || other.is_number())) {
-        // Simplified ToPrimitive
         return Value(to_string()).loose_equals(other);
     }
     if ((is_string() || is_number()) && other.is_object()) {
-        return loose_equals(Value(other.build()));
+        return loose_equals(Value(other.to_string()));
     }
 
     return false;
@@ -274,7 +270,7 @@ String Value::typeof_string() const {
         case ValueType::Undefined:
             return "undefined"_s;
         case ValueType::Null:
-            return "object"_s;  // typeof null === "object" (historical quirk)
+            return "object"_s;
         case ValueType::Boolean:
             return "boolean"_s;
         case ValueType::Number:
@@ -286,8 +282,6 @@ String Value::typeof_string() const {
                 return "function"_s;
             }
             return "object"_s;
-        case ValueType::Symbol:
-            return "symbol"_s;
         default:
             return "undefined"_s;
     }
@@ -336,6 +330,10 @@ void Value::mark() const {
     }
 }
 
+Value Value::native_function(NativeFn fn, u8 arity, const String& name) {
+    return Value(std::make_shared<NativeFunction>(name, std::move(fn), arity));
+}
+
 // ============================================================================
 // Value operations
 // ============================================================================
@@ -343,11 +341,9 @@ void Value::mark() const {
 namespace value_ops {
 
 Value add(const Value& lhs, const Value& rhs) {
-    // String concatenation
     if (lhs.is_string() || rhs.is_string()) {
-        return Value(lhs.build() + rhs.build());
+        return Value(lhs.to_string() + rhs.to_string());
     }
-    // Numeric addition
     return Value(lhs.to_number() + rhs.to_number());
 }
 
@@ -408,7 +404,7 @@ Value unsigned_right_shift(const Value& lhs, const Value& rhs) {
 
 Value less_than(const Value& lhs, const Value& rhs) {
     if (lhs.is_string() && rhs.is_string()) {
-        return Value(lhs.as_string() < rhs.as_string());
+        return Value(lhs.as_string().std_string() < rhs.as_string().std_string());
     }
     f64 l = lhs.to_number();
     f64 r = rhs.to_number();
@@ -420,7 +416,7 @@ Value less_than(const Value& lhs, const Value& rhs) {
 
 Value less_equal(const Value& lhs, const Value& rhs) {
     if (lhs.is_string() && rhs.is_string()) {
-        return Value(lhs.as_string() <= rhs.as_string());
+        return Value(lhs.as_string().std_string() <= rhs.as_string().std_string());
     }
     f64 l = lhs.to_number();
     f64 r = rhs.to_number();
@@ -432,7 +428,7 @@ Value less_equal(const Value& lhs, const Value& rhs) {
 
 Value greater_than(const Value& lhs, const Value& rhs) {
     if (lhs.is_string() && rhs.is_string()) {
-        return Value(lhs.as_string() > rhs.as_string());
+        return Value(lhs.as_string().std_string() > rhs.as_string().std_string());
     }
     f64 l = lhs.to_number();
     f64 r = rhs.to_number();
@@ -444,7 +440,7 @@ Value greater_than(const Value& lhs, const Value& rhs) {
 
 Value greater_equal(const Value& lhs, const Value& rhs) {
     if (lhs.is_string() && rhs.is_string()) {
-        return Value(lhs.as_string() >= rhs.as_string());
+        return Value(lhs.as_string().std_string() >= rhs.as_string().std_string());
     }
     f64 l = lhs.to_number();
     f64 r = rhs.to_number();
@@ -462,12 +458,7 @@ Value typeof_op(const Value& val) {
     return Value(val.typeof_string());
 }
 
-Value instanceof_op(const Value& obj, const Value& constructor) {
-    if (!obj.is_object() || !constructor.is_function()) {
-        return Value(false);
-    }
-    // Simplified instanceof check
-    // Full implementation would check prototype chain
+Value instanceof_op(const Value& /*obj*/, const Value& /*constructor*/) {
     return Value(false);
 }
 
@@ -475,7 +466,7 @@ Value in_op(const Value& key, const Value& obj) {
     if (!obj.is_object()) {
         return Value(false);
     }
-    String prop = key.build();
+    String prop = key.to_string();
     return Value(obj.as_object()->has_property(prop));
 }
 

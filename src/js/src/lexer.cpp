@@ -91,6 +91,8 @@ void Lexer::set_input(const String& source) {
     m_position = 0;
     m_line = 1;
     m_column = 1;
+    m_template_mode = false;
+    m_allow_regexp = true;
     m_peeked.reset();
 }
 
@@ -99,6 +101,8 @@ void Lexer::set_input(std::string_view source) {
     m_position = 0;
     m_line = 1;
     m_column = 1;
+    m_template_mode = false;
+    m_allow_regexp = true;
     m_peeked.reset();
 }
 
@@ -175,6 +179,10 @@ bool Lexer::consume_if(std::string_view str) {
 }
 
 Token Lexer::scan_token() {
+    if (m_template_mode) {
+        return scan_template();
+    }
+
     skip_whitespace_and_comments();
 
     m_token_start = m_position;
@@ -194,6 +202,7 @@ Token Lexer::scan_token() {
 
     // Template literal
     if (cp == '`') {
+        m_template_mode = true;
         return scan_template();
     }
 
@@ -341,20 +350,25 @@ Token Lexer::scan_string(unicode::CodePoint quote) {
 }
 
 Token Lexer::scan_template() {
-    consume(); // `
+    bool is_head = false;
+    if (peek() == '`') {
+        consume(); // `
+        is_head = true;
+    }
     StringBuilder str;
-    bool is_head = true;
 
     while (!at_end()) {
         unicode::CodePoint cp = peek();
 
         if (cp == '`') {
             consume();
+            m_template_mode = false;
             return make_token(is_head ? TokenType::NoSubstitutionTemplate : TokenType::TemplateTail, str.build());
         }
 
         if (cp == '$' && peek(1) == '{') {
             consume(); consume();
+            m_template_mode = false;
             return make_token(is_head ? TokenType::TemplateHead : TokenType::TemplateMiddle, str.build());
         }
 
@@ -373,28 +387,38 @@ Token Lexer::scan_template() {
 }
 
 Token Lexer::scan_regexp() {
-    // Simplified: just scan until /
+    bool in_class = false;
+    bool escaping = false;
     StringBuilder pattern;
     StringBuilder flags;
 
-    while (!at_end() && peek() != '/') {
+    while (!at_end()) {
         unicode::CodePoint cp = consume();
-        if (cp == '\\' && !at_end()) {
-            pattern.append(cp);
-            pattern.append(consume());
+        if (!escaping) {
+            if (cp == '\\') {
+                escaping = true;
+                pattern.append(cp);
+                continue;
+            }
+            if (cp == '[') in_class = true;
+            if (cp == ']') in_class = false;
+            if (cp == '/' && !in_class) {
+                break; // closing slash already consumed
+            }
         } else {
-            pattern.append(cp);
+            escaping = false;
         }
+        pattern.append(cp);
     }
-
-    if (!at_end()) consume(); // closing /
 
     // Flags
     while (!at_end() && is_identifier_part(peek())) {
         flags.append(consume());
     }
 
-    return make_token(TokenType::RegExp, pattern.build());
+    Token token = make_token(TokenType::RegExp, pattern.build());
+    token.regex_flags = flags.build();
+    return token;
 }
 
 Token Lexer::scan_punctuator() {
@@ -417,8 +441,8 @@ Token Lexer::scan_punctuator() {
             return make_token(TokenType::Dot);
 
         case '?':
-            if (consume_if("?.")) return make_token(TokenType::OptionalChain);
-            if (consume_if("??=")) return make_token(TokenType::QuestionQuestionAssign);
+            if (consume_if(".")) return make_token(TokenType::OptionalChain);
+            if (consume_if("?=")) return make_token(TokenType::QuestionQuestionAssign);
             if (consume_if("?")) return make_token(TokenType::QuestionQuestion);
             return make_token(TokenType::Question);
 
@@ -467,6 +491,7 @@ Token Lexer::scan_punctuator() {
 
         case '/':
             if (consume_if("=")) return make_token(TokenType::SlashAssign);
+            if (m_allow_regexp) return scan_regexp();
             return make_token(TokenType::Slash);
 
         case '%':
@@ -496,6 +521,10 @@ Token Lexer::scan_punctuator() {
 
 void Lexer::skip_whitespace_and_comments() {
     m_line_terminator_before = false;
+
+    if (m_template_mode) {
+        return;
+    }
 
     while (!at_end()) {
         unicode::CodePoint cp = peek();

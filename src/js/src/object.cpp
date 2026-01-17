@@ -1,14 +1,15 @@
 /**
- * JavaScript Object implementation
+ * JavaScript Object implementation (minimal)
  */
 
 #include "lithium/js/object.hpp"
 #include "lithium/js/vm.hpp"
+#include <cmath>
 
 namespace lithium::js {
 
 // ============================================================================
-// Object implementation
+// Object
 // ============================================================================
 
 bool Object::has_property(const String& name) const {
@@ -65,49 +66,8 @@ std::vector<String> Object::own_property_names() const {
     return names;
 }
 
-void Object::trace() {
-    for (auto& [_, value] : m_properties) {
-        value.mark();
-    }
-    if (m_prototype) {
-        m_prototype->mark();
-    }
-}
-
 // ============================================================================
-// Closure implementation
-// ============================================================================
-
-Closure::Closure(std::shared_ptr<Function> function)
-    : m_function(std::move(function))
-{
-    m_upvalues.resize(m_function->upvalue_count());
-}
-
-void Closure::set_upvalue(usize index, std::shared_ptr<UpvalueSlot> upvalue) {
-    if (index < m_upvalues.size()) {
-        m_upvalues[index] = std::move(upvalue);
-    }
-}
-
-UpvalueSlot* Closure::get_upvalue(usize index) const {
-    if (index < m_upvalues.size()) {
-        return m_upvalues[index].get();
-    }
-    return nullptr;
-}
-
-void Closure::trace() {
-    Object::trace();
-    for (auto& upvalue : m_upvalues) {
-        if (upvalue && !upvalue->is_open) {
-            upvalue->closed.mark();
-        }
-    }
-}
-
-// ============================================================================
-// NativeFunction implementation
+// NativeFunction
 // ============================================================================
 
 NativeFunction::NativeFunction(String name, NativeFn fn, u8 arity)
@@ -122,7 +82,7 @@ Value NativeFunction::call(VM& vm, const std::vector<Value>& args) {
 }
 
 // ============================================================================
-// Array implementation
+// Array
 // ============================================================================
 
 Array::Array() = default;
@@ -192,7 +152,6 @@ Value Array::get_property(const String& name) const {
         return Value(static_cast<f64>(m_elements.size()));
     }
 
-    // Check if it's a numeric index
     try {
         usize index = std::stoull(std::string(name.data(), name.size()));
         if (index < m_elements.size()) {
@@ -212,7 +171,6 @@ void Array::set_property(const String& name, const Value& value) {
         return;
     }
 
-    // Check if it's a numeric index
     try {
         usize index = std::stoull(std::string(name.data(), name.size()));
         set_element(static_cast<u32>(index), value);
@@ -223,104 +181,14 @@ void Array::set_property(const String& name, const Value& value) {
 }
 
 void Array::trace() {
-    Object::trace();
     for (auto& element : m_elements) {
         element.mark();
     }
-}
-
-// ============================================================================
-// Class implementation
-// ============================================================================
-
-Class::Class(String name) : m_name(std::move(name)) {}
-
-void Class::set_method(const String& name, std::shared_ptr<Closure> method) {
-    m_methods[name] = std::move(method);
-}
-
-Closure* Class::get_method(const String& name) const {
-    auto it = m_methods.find(name);
-    if (it != m_methods.end()) {
-        return it->second.get();
+    if (m_prototype) {
+        m_prototype->mark();
     }
-    if (m_superclass) {
-        return m_superclass->get_method(name);
-    }
-    return nullptr;
-}
-
-bool Class::has_method(const String& name) const {
-    if (m_methods.count(name) > 0) {
-        return true;
-    }
-    if (m_superclass) {
-        return m_superclass->has_method(name);
-    }
-    return false;
-}
-
-void Class::set_static_method(const String& name, std::shared_ptr<Closure> method) {
-    m_static_methods[name] = std::move(method);
-}
-
-Closure* Class::get_static_method(const String& name) const {
-    auto it = m_static_methods.find(name);
-    if (it != m_static_methods.end()) {
-        return it->second.get();
-    }
-    return nullptr;
-}
-
-void Class::set_superclass(std::shared_ptr<Class> superclass) {
-    m_superclass = std::move(superclass);
-}
-
-void Class::trace() {
-    Object::trace();
-    for (auto& [_, method] : m_methods) {
-        if (method) method->mark();
-    }
-    for (auto& [_, method] : m_static_methods) {
-        if (method) method->mark();
-    }
-    if (m_superclass) {
-        m_superclass->mark();
-    }
-}
-
-// ============================================================================
-// Instance implementation
-// ============================================================================
-
-Instance::Instance(std::shared_ptr<Class> klass)
-    : m_class(std::move(klass))
-{
-    set_prototype(m_class);
-}
-
-void Instance::trace() {
-    Object::trace();
-    if (m_class) {
-        m_class->mark();
-    }
-}
-
-// ============================================================================
-// BoundMethod implementation
-// ============================================================================
-
-BoundMethod::BoundMethod(Value receiver, std::shared_ptr<Closure> method)
-    : m_receiver(std::move(receiver))
-    , m_method(std::move(method))
-{
-}
-
-void BoundMethod::trace() {
-    Object::trace();
-    m_receiver.mark();
-    if (m_method) {
-        m_method->mark();
+    for (auto& [_, value] : m_properties) {
+        value.mark();
     }
 }
 

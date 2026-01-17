@@ -2,20 +2,21 @@
 
 #include "lithium/core/types.hpp"
 #include "lithium/core/string.hpp"
-#include <variant>
+#include <functional>
 #include <memory>
+#include <variant>
+#include <vector>
 
 namespace lithium::js {
 
 // Forward declarations
+class Value;
 class Object;
-class JSString;
-class Function;
-class Closure;
 class NativeFunction;
 class Array;
-class Class;
-class Instance;
+class VM;
+
+using NativeFn = std::function<Value(VM& vm, const std::vector<Value>& args)>;
 
 // ============================================================================
 // JavaScript Value
@@ -58,14 +59,16 @@ public:
 
     // Object type checking
     [[nodiscard]] bool is_function() const;
+    [[nodiscard]] bool is_native_function() const;
     [[nodiscard]] bool is_array() const;
-    [[nodiscard]] bool is_class() const;
+    [[nodiscard]] bool is_callable() const;
 
     // Value access (with type checks)
     [[nodiscard]] bool as_boolean() const;
     [[nodiscard]] f64 as_number() const;
     [[nodiscard]] const String& as_string() const;
     [[nodiscard]] Object* as_object() const;
+    [[nodiscard]] NativeFunction* as_native_function() const;
 
     template<typename T>
     [[nodiscard]] T* as() const {
@@ -78,10 +81,12 @@ public:
     [[nodiscard]] i32 to_int32() const;
     [[nodiscard]] u32 to_uint32() const;
     [[nodiscard]] String to_string() const;
+    [[nodiscard]] bool is_truthy() const { return to_boolean(); }
 
     // Comparison
     [[nodiscard]] bool strict_equals(const Value& other) const;
     [[nodiscard]] bool loose_equals(const Value& other) const;
+    [[nodiscard]] bool equals(const Value& other) const { return loose_equals(other); }
 
     // Operators for convenience
     [[nodiscard]] bool operator==(const Value& other) const { return strict_equals(other); }
@@ -99,6 +104,11 @@ public:
     // Static constructors
     static Value undefined() { return Value(); }
     static Value null() { return Value(nullptr); }
+    static Value number(f64 n) { return Value(n); }
+    static Value boolean(bool b) { return Value(b); }
+    static Value string(const String& s) { return Value(s); }
+    static Value object(std::shared_ptr<Object> obj) { return Value(std::move(obj)); }
+    static Value native_function(NativeFn fn, u8 arity = 0, const String& name = ""_s);
 
 private:
     ValueType m_type{ValueType::Undefined};

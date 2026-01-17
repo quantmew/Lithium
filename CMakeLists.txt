@@ -53,7 +53,7 @@ add_subdirectory(src/platform)
 add_subdirectory(src/dom)
 add_subdirectory(src/html)
 add_subdirectory(src/css)
-# add_subdirectory(src/js)  # Temporarily disabled - needs compiler.cpp refactoring
+add_subdirectory(src/js)
 # add_subdirectory(src/text)  # Temporarily disabled - needs fixes
 # add_subdirectory(src/layout)  # Temporarily disabled - depends on text module
 # add_subdirectory(src/render)  # Temporarily disabled - depends on text module

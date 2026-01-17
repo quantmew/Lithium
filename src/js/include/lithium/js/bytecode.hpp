@@ -1,216 +1,134 @@
 #pragma once
 
-#include "lithium/core/types.hpp"
 #include "lithium/core/string.hpp"
+#include "lithium/core/types.hpp"
+#include "lithium/js/value.hpp"
+#include <memory>
 #include <vector>
 
 namespace lithium::js {
 
 // ============================================================================
-// Bytecode Instructions
+// Bytecode Instructions (stack-based)
 // ============================================================================
 
 enum class OpCode : u8 {
-    // Stack manipulation
-    Pop,            // Discard top of stack
-    Dup,            // Duplicate top of stack
-    Swap,           // Swap top two values
-
     // Constants
-    LoadConst,      // Load constant from pool: idx
-    LoadNull,       // Push null
-    LoadUndefined,  // Push undefined
-    LoadTrue,       // Push true
-    LoadFalse,      // Push false
-    LoadZero,       // Push 0
-    LoadOne,        // Push 1
+    LoadConst,      // u16 idx
+    LoadNull,
+    LoadUndefined,
+    LoadTrue,
+    LoadFalse,
 
-    // Variables
-    GetLocal,       // Get local variable: slot
-    SetLocal,       // Set local variable: slot
-    GetGlobal,      // Get global variable: name_idx
-    SetGlobal,      // Set global variable: name_idx
-    GetUpvalue,     // Get captured variable: idx
-    SetUpvalue,     // Set captured variable: idx
-    DefineGlobal,   // Define global variable: name_idx
+    // Stack
+    Pop,
+    Dup,
 
-    // Object/Property access
-    GetProperty,    // Get property: name_idx
-    SetProperty,    // Set property: name_idx
-    GetElement,     // Get element (computed)
-    SetElement,     // Set element (computed)
-    DeleteProperty, // Delete property
+    // Variables (by name idx into constant pool holding string)
+    DefineVar,      // u16 name_idx, u8 is_const
+    GetVar,         // u16 name_idx
+    SetVar,         // u16 name_idx
 
-    // Arithmetic
+    // Property access
+    GetProp,        // u16 name_idx
+    SetProp,        // u16 name_idx
+    GetElem,
+    SetElem,
+
+    // Arithmetic / comparison
     Add,
     Subtract,
     Multiply,
     Divide,
     Modulo,
     Exponent,
-    Negate,         // Unary minus
-    Increment,
-    Decrement,
-
-    // Bitwise
-    BitwiseNot,
-    BitwiseAnd,
-    BitwiseOr,
-    BitwiseXor,
     LeftShift,
     RightShift,
     UnsignedRightShift,
-
-    // Comparison
-    Equal,
-    NotEqual,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    BitwiseNot,
+    Negate,
     StrictEqual,
     StrictNotEqual,
     LessThan,
     LessEqual,
     GreaterThan,
     GreaterEqual,
-
-    // Logical
-    Not,
-
-    // Type operations
-    Typeof,
     Instanceof,
     In,
+    Typeof,
+    Void,
+    LogicalNot,
 
     // Control flow
-    Jump,           // Unconditional jump: offset (i16)
-    JumpIfFalse,    // Jump if false (pop): offset (i16)
-    JumpIfTrue,     // Jump if true (pop): offset (i16)
-    JumpIfFalseKeep,// Jump if false (keep): offset (i16)
-    JumpIfTrueKeep, // Jump if true (keep): offset (i16)
-    Loop,           // Jump backward: offset (u16)
+    Jump,           // i16 offset
+    JumpIfFalse,    // i16 offset (peek)
+    JumpIfNullish,  // i16 offset (peek)
+    Throw,          // throw value on top
+    PushHandler,    // u16 catch_ip, u16 finally_ip, u8 has_catch
+    PopHandler,     // no operand
+
+    // Literals
+    MakeArray,      // u16 count
+    ArrayPush,      // push value into array (array, value -> array)
+    ArraySpread,    // spread iterable (array, value -> array)
+    MakeObject,     // no operand
+    ObjectSpread,   // (object, source -> object)
 
     // Functions
-    Call,           // Call function: argc
-    TailCall,       // Tail call: argc
-    Return,         // Return from function
-    Closure,        // Create closure: func_idx, upvalue_count
+    MakeFunction,   // u16 function_idx
+    Call,           // u16 arg_count
+    Return,         // no operand (uses top of stack or undefined)
 
-    // Objects
-    CreateObject,   // Create empty object
-    CreateArray,    // Create array: element_count
-    DefineProperty, // Define property with flags
-
-    // Class
-    CreateClass,    // Create class: name_idx
-    DefineMethod,   // Define method: name_idx
-    GetSuper,       // Get super reference
-
-    // Iteration
-    GetIterator,    // Get iterator
-    IteratorNext,   // Get next value
-    IteratorClose,  // Close iterator
-
-    // Exception handling
-    Throw,          // Throw exception
-    PushExceptionHandler, // Push handler: catch_offset, finally_offset
-    PopExceptionHandler,  // Pop handler
-    EnterFinally,   // Enter finally block
-    LeaveFinally,   // Leave finally block
-
-    // Misc
-    This,           // Push this value
-    SuperCall,      // Call super constructor: argc
-    Spread,         // Spread array/object
-    Debugger,       // Debugger statement
+    // Dynamic scope helpers
+    EnterWith,      // none (object on stack)
+    ExitWith        // none
 };
 
 // ============================================================================
-// Bytecode Chunk
+// Chunk: bytecode + constants
 // ============================================================================
-
-struct LineInfo {
-    usize offset;
-    usize line;
-};
 
 class Chunk {
 public:
-    Chunk() = default;
-
-    // Writing bytecode
     void write(OpCode op);
-    void write(u8 byte);
+    void write_u8(u8 byte);
     void write_u16(u16 value);
     void write_i16(i16 value);
 
-    // Patch jump targets
-    void patch_jump(usize offset);
-    void patch_jump(usize offset, i16 target);
-
-    // Add constant and return index
-    [[nodiscard]] u16 add_constant(f64 value);
-    [[nodiscard]] u16 add_constant(const String& value);
-    [[nodiscard]] u16 add_constant(bool value);
-
-    // Access
-    [[nodiscard]] const std::vector<u8>& code() const { return m_code; }
+    [[nodiscard]] usize size() const { return m_code.size(); }
     [[nodiscard]] u8 read(usize offset) const { return m_code[offset]; }
     [[nodiscard]] u16 read_u16(usize offset) const;
     [[nodiscard]] i16 read_i16(usize offset) const;
 
-    [[nodiscard]] usize size() const { return m_code.size(); }
+    [[nodiscard]] u16 add_constant(const Value& value);
+    [[nodiscard]] const std::vector<Value>& constants() const { return m_constants; }
 
-    // Line information
-    void set_line(usize line);
-    [[nodiscard]] usize get_line(usize offset) const;
+    // Patch helpers (offset points to operand bytes)
+    void patch_i16(usize operand_offset, i16 value);
 
-    // Constants
-    [[nodiscard]] const std::vector<std::variant<f64, String, bool>>& constants() const {
-        return m_constants;
-    }
-
-    // Disassembly (for debugging)
-    [[nodiscard]] String disassemble() const;
-    [[nodiscard]] String disassemble_instruction(usize offset) const;
+    [[nodiscard]] const std::vector<u8>& code() const { return m_code; }
 
 private:
     std::vector<u8> m_code;
-    std::vector<std::variant<f64, String, bool>> m_constants;
-    std::vector<LineInfo> m_lines;
-    usize m_current_line{1};
+    std::vector<Value> m_constants;
 };
 
 // ============================================================================
-// Function Object (compiled)
+// Function & Module
 // ============================================================================
 
-struct Upvalue {
-    u8 index;
-    bool is_local;
+struct FunctionCode {
+    String name;
+    std::vector<String> params;
+    Chunk chunk;
 };
 
-class Function {
-public:
-    Function(String name, u8 arity);
-
-    [[nodiscard]] const String& name() const { return m_name; }
-    [[nodiscard]] u8 arity() const { return m_arity; }
-    [[nodiscard]] Chunk& chunk() { return m_chunk; }
-    [[nodiscard]] const Chunk& chunk() const { return m_chunk; }
-
-    // Upvalues
-    void add_upvalue(u8 index, bool is_local);
-    [[nodiscard]] const std::vector<Upvalue>& upvalues() const { return m_upvalues; }
-    [[nodiscard]] usize upvalue_count() const { return m_upvalues.size(); }
-
-    // Local count (for stack frame allocation)
-    void set_local_count(u8 count) { m_local_count = count; }
-    [[nodiscard]] u8 local_count() const { return m_local_count; }
-
-private:
-    String m_name;
-    u8 m_arity{0};
-    u8 m_local_count{0};
-    Chunk m_chunk;
-    std::vector<Upvalue> m_upvalues;
+struct ModuleBytecode {
+    std::vector<std::shared_ptr<FunctionCode>> functions;
+    u16 entry{0};
 };
 
 } // namespace lithium::js

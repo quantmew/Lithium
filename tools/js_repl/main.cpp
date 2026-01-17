@@ -60,8 +60,8 @@ int main(int argc, char* argv[]) {
         if (result == js::VM::InterpretResult::Ok) {
             // Print result if not undefined
             // (Would need to implement proper result return from VM)
-        } else if (result == js::VM::InterpretResult::CompileError) {
-            std::cerr << "Compile error\n";
+        } else if (result == js::VM::InterpretResult::ParseError) {
+            std::cerr << "Parse error: " << vm.error_message().c_str() << "\n";
         } else if (result == js::VM::InterpretResult::RuntimeError) {
             std::cerr << "Runtime error: " << vm.error_message().c_str() << "\n";
         }
