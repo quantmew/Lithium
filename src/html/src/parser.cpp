@@ -114,6 +114,8 @@ RefPtr<dom::Document> Parser::parse(const String& html) {
     builder.set_document(document);
     builder.set_tokenizer(&tokenizer);
     builder.set_scripting_enabled(m_scripting_enabled);
+    builder.set_parser_cannot_change_mode(m_parser_cannot_change_mode);
+    builder.set_iframe_srcdoc(m_is_iframe_srcdoc);
     builder.set_error_callback([this](const String& msg) {
         on_parse_error(msg);
     });
@@ -181,6 +183,8 @@ RefPtr<dom::DocumentFragment> Parser::parse_fragment(
     builder.set_document(document);
     builder.set_tokenizer(&tokenizer);
     builder.set_scripting_enabled(m_scripting_enabled);
+    builder.set_parser_cannot_change_mode(true);
+    builder.set_iframe_srcdoc(false);
     builder.set_error_callback([this](const String& msg) {
         on_parse_error(msg);
     });
@@ -217,6 +221,8 @@ void Parser::begin() {
     m_streaming_builder->set_document(m_streaming_document);
     m_streaming_builder->set_tokenizer(m_streaming_tokenizer.get());
     m_streaming_builder->set_scripting_enabled(m_scripting_enabled);
+    m_streaming_builder->set_parser_cannot_change_mode(m_parser_cannot_change_mode);
+    m_streaming_builder->set_iframe_srcdoc(m_is_iframe_srcdoc);
     m_streaming_builder->set_error_callback([this](const String& msg) {
         on_parse_error(msg);
     });

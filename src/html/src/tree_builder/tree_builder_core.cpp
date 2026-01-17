@@ -51,6 +51,8 @@ void TreeBuilder::prepare_for_fragment(RefPtr<dom::Element> context_element) {
     m_head_element = nullptr;
     m_form_element = nullptr;
     m_frameset_ok = true;
+    m_parser_cannot_change_mode = true;
+    m_is_iframe_srcdoc = false;
 
     if (context_element) {
         if (context_element->local_name() == "form"_s) {

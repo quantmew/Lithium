@@ -33,6 +33,10 @@ public:
     void set_scripting_enabled(bool enabled) { m_scripting_enabled = enabled; }
     [[nodiscard]] bool scripting_enabled() const { return m_scripting_enabled; }
 
+    // Mode flags
+    void set_parser_cannot_change_mode(bool value) { m_parser_cannot_change_mode = value; }
+    void set_iframe_srcdoc(bool value) { m_is_iframe_srcdoc = value; }
+
     // Error handling
     using ErrorCallback = std::function<void(const String& message, usize line, usize column)>;
     void set_error_callback(ErrorCallback callback) { m_error_callback = std::move(callback); }
@@ -44,6 +48,8 @@ private:
     void on_parse_error(const String& message);
 
     bool m_scripting_enabled{false};
+    bool m_parser_cannot_change_mode{false};
+    bool m_is_iframe_srcdoc{false};
     ErrorCallback m_error_callback;
     std::vector<String> m_errors;
 

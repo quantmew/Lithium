@@ -157,7 +157,9 @@ void TreeBuilder::process_initial(const Token& token) {
             }
         }
 
-        if (!quirks) {
+        bool allow_limited_quirks = !m_is_iframe_srcdoc && !m_parser_cannot_change_mode;
+
+        if (!quirks && allow_limited_quirks) {
             for (const auto* prefix : LIMITED_QUIRKS_PREFIXES) {
                 if (starts_with(public_lower, String(prefix))) {
                     limited_quirks = true;
@@ -166,7 +168,7 @@ void TreeBuilder::process_initial(const Token& token) {
             }
         }
 
-        if (!quirks && !limited_quirks && !system_missing && !system_empty) {
+        if (!quirks && allow_limited_quirks && !limited_quirks && !system_missing && !system_empty) {
             for (const auto* prefix : LIMITED_QUIRKS_NEED_SYSTEM) {
                 if (starts_with(public_lower, String(prefix))) {
                     limited_quirks = true;
@@ -175,7 +177,7 @@ void TreeBuilder::process_initial(const Token& token) {
             }
         }
 
-        if (limited_quirks) {
+        if (limited_quirks && allow_limited_quirks) {
             m_document->set_quirks_mode(dom::Document::QuirksMode::LimitedQuirks);
         } else if (quirks) {
             m_document->set_quirks_mode(dom::Document::QuirksMode::Quirks);
@@ -346,7 +348,7 @@ void TreeBuilder::process_in_head(const Token& token) {
             return;
         }
 
-        if (tag.name == "style"_s || tag.name == "noscript"_s) {
+        if (tag.name == "style"_s) {
             auto element = create_element_for_token(tag);
             insert_element(element);
             if (m_tokenizer) {
@@ -354,6 +356,23 @@ void TreeBuilder::process_in_head(const Token& token) {
             }
             m_original_insertion_mode = m_insertion_mode;
             m_insertion_mode = InsertionMode::Text;
+            return;
+        }
+
+        if (tag.name == "noscript"_s) {
+            if (m_scripting_enabled) {
+                auto element = create_element_for_token(tag);
+                insert_element(element);
+                if (m_tokenizer) {
+                    m_tokenizer->set_state(TokenizerState::RAWTEXT);
+                }
+                m_original_insertion_mode = m_insertion_mode;
+                m_insertion_mode = InsertionMode::Text;
+            } else {
+                auto element = create_element_for_token(tag);
+                insert_element(element);
+                m_insertion_mode = InsertionMode::InHeadNoscript;
+            }
             return;
         }
 
@@ -413,7 +432,61 @@ void TreeBuilder::process_in_head(const Token& token) {
 }
 
 void TreeBuilder::process_in_head_noscript(const Token& token) {
-    process_in_head(token);
+    if (auto* character = std::get_if<CharacterToken>(&token)) {
+        if (detail::is_ascii_whitespace(character->code_point)) {
+            insert_character(character->code_point);
+            return;
+        }
+    }
+
+    if (auto* comment = std::get_if<CommentToken>(&token)) {
+        insert_comment(*comment);
+        return;
+    }
+
+    if (auto* doctype = std::get_if<DoctypeToken>(&token)) {
+        parse_error("Unexpected DOCTYPE"_s);
+        return;
+    }
+
+    if (is_start_tag_named(token, "html"_s)) {
+        process_using_rules_for(InsertionMode::InBody, token);
+        return;
+    }
+
+    if (is_end_tag_named(token, "noscript"_s)) {
+        pop_current_element();
+        m_insertion_mode = InsertionMode::InHead;
+        return;
+    }
+
+    if (is_start_tag(token)) {
+        auto& tag = std::get<TagToken>(token);
+        if (tag.name == "basefont"_s || tag.name == "bgsound"_s ||
+            tag.name == "link"_s || tag.name == "meta"_s || tag.name == "noframes"_s ||
+            tag.name == "style"_s) {
+            process_using_rules_for(InsertionMode::InHead, token);
+            return;
+        }
+        if (tag.name == "head"_s || tag.name == "noscript"_s) {
+            parse_error("Unexpected start tag in noscript head"_s);
+            return;
+        }
+        parse_error("Unexpected start tag in noscript head"_s);
+        pop_current_element();
+        m_insertion_mode = InsertionMode::InHead;
+        process_token(token);
+        return;
+    }
+
+    if (is_end_tag(token)) {
+        parse_error("Unexpected end tag in noscript head"_s);
+        return;
+    }
+
+    pop_current_element();
+    m_insertion_mode = InsertionMode::InHead;
+    process_token(token);
 }
 
 void TreeBuilder::process_after_head(const Token& token) {

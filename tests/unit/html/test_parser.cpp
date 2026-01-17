@@ -824,3 +824,52 @@ TEST_F(HTMLParserTest, DocumentWriteAcrossOpenElements) {
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->text_content(), String("first second"));
 }
+
+TEST_F(HTMLParserTest, NoscriptHeadWhenScriptingDisabledUsesHeadRules) {
+    Parser parser;
+    parser.set_scripting_enabled(false);
+    auto doc = parser.parse(String("<head><noscript><link rel='stylesheet' href='x'></noscript></head><body><p>t</p></body>"));
+
+    auto* head = doc->head();
+    ASSERT_NE(head, nullptr);
+    auto* noscript = head->first_element_child();
+    ASSERT_NE(noscript, nullptr);
+    EXPECT_EQ(noscript->local_name(), String("noscript"));
+    auto* link = noscript->first_element_child();
+    ASSERT_NE(link, nullptr);
+    EXPECT_EQ(link->local_name(), String("link"));
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* p = body->first_element_child();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->text_content(), String("t"));
+}
+
+TEST_F(HTMLParserTest, NoscriptHeadWhenScriptingEnabledRawtext) {
+    Parser parser;
+    parser.set_scripting_enabled(true);
+    auto doc = parser.parse(String("<head><noscript><style></style></noscript></head><body></body>"));
+
+    auto* head = doc->head();
+    ASSERT_NE(head, nullptr);
+    auto* noscript = head->first_element_child();
+    ASSERT_NE(noscript, nullptr);
+    EXPECT_EQ(noscript->local_name(), String("noscript"));
+    ASSERT_TRUE(noscript->first_child()->is_text());
+    EXPECT_EQ(noscript->first_child()->text_content(), String("<style></style>"));
+}
+
+TEST_F(HTMLParserTest, IframeSrcdocSkipsLimitedQuirks) {
+    Parser parser;
+    parser.set_iframe_srcdoc(true);
+    auto doc = parser.parse(String("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\"><html></html>"));
+    EXPECT_EQ(doc->quirks_mode(), dom::Document::QuirksMode::NoQuirks);
+}
+
+TEST_F(HTMLParserTest, ParserCannotChangeModeSkipsLimitedQuirks) {
+    Parser parser;
+    parser.set_parser_cannot_change_mode(true);
+    auto doc = parser.parse(String("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\"><html></html>"));
+    EXPECT_EQ(doc->quirks_mode(), dom::Document::QuirksMode::NoQuirks);
+}

@@ -79,6 +79,8 @@ public:
 
     // Scripting support
     void set_scripting_enabled(bool enabled) { m_scripting_enabled = enabled; }
+    void set_parser_cannot_change_mode(bool value) { m_parser_cannot_change_mode = value; }
+    void set_iframe_srcdoc(bool value) { m_is_iframe_srcdoc = value; }
 
     // Fragment parsing context
     void set_context_element(dom::Element* context) { m_context_element = context; }
@@ -192,6 +194,8 @@ void push_active_formatting_element(RefPtr<dom::Element> element, const Token& t
 
     // Flags
     bool m_scripting_enabled{false};
+    bool m_parser_cannot_change_mode{false};
+    bool m_is_iframe_srcdoc{false};
     bool m_frameset_ok{true};
     bool m_foster_parenting{false};
     bool m_self_closing_flag_acknowledged{true};
