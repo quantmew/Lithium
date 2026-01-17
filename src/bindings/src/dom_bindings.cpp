@@ -9,6 +9,112 @@
 
 namespace lithium::bindings {
 
+namespace {
+
+class ElementWrapper : public js::Object {
+public:
+    explicit ElementWrapper(dom::Element* element) : m_element(element) {}
+
+    [[nodiscard]] js::Value get_property(const String& name) const override {
+        if (!m_element) {
+            return js::Object::get_property(name);
+        }
+        if (name == "nodeType"_s) {
+            return js::Value(static_cast<f64>(static_cast<int>(m_element->node_type())));
+        }
+        if (name == "nodeName"_s) {
+            return js::Value(m_element->node_name());
+        }
+        if (name == "tagName"_s) {
+            return js::Value(m_element->tag_name());
+        }
+        if (name == "id"_s) {
+            return js::Value(m_element->id());
+        }
+        if (name == "className"_s) {
+            return js::Value(m_element->class_name());
+        }
+        if (name == "innerHTML"_s) {
+            return js::Value(m_element->inner_html());
+        }
+        if (name == "outerHTML"_s) {
+            return js::Value(m_element->outer_html());
+        }
+        if (name == "textContent"_s) {
+            return js::Value(m_element->text_content());
+        }
+        if (name == "childElementCount"_s) {
+            return js::Value(static_cast<f64>(m_element->child_element_count()));
+        }
+        return js::Object::get_property(name);
+    }
+
+    void set_property(const String& name, const js::Value& value) override {
+        if (!m_element) {
+            js::Object::set_property(name, value);
+            return;
+        }
+        if (name == "innerHTML"_s) {
+            m_element->set_inner_html(value.to_string());
+            return;
+        }
+        if (name == "textContent"_s) {
+            m_element->set_text_content(value.to_string());
+            return;
+        }
+        if (name == "id"_s) {
+            m_element->set_id(value.to_string());
+            return;
+        }
+        if (name == "className"_s) {
+            m_element->set_class_name(value.to_string());
+            return;
+        }
+        js::Object::set_property(name, value);
+    }
+
+private:
+    dom::Element* m_element{nullptr};
+};
+
+class TextWrapper : public js::Object {
+public:
+    explicit TextWrapper(dom::Text* text) : m_text(text) {}
+
+    [[nodiscard]] js::Value get_property(const String& name) const override {
+        if (!m_text) {
+            return js::Object::get_property(name);
+        }
+        if (name == "nodeType"_s) {
+            return js::Value(static_cast<f64>(static_cast<int>(m_text->node_type())));
+        }
+        if (name == "nodeName"_s) {
+            return js::Value(m_text->node_name());
+        }
+        if (name == "textContent"_s) {
+            return js::Value(m_text->data());
+        }
+        return js::Object::get_property(name);
+    }
+
+    void set_property(const String& name, const js::Value& value) override {
+        if (!m_text) {
+            js::Object::set_property(name, value);
+            return;
+        }
+        if (name == "textContent"_s) {
+            m_text->set_data(value.to_string());
+            return;
+        }
+        js::Object::set_property(name, value);
+    }
+
+private:
+    dom::Text* m_text{nullptr};
+};
+
+} // namespace
+
 // ============================================================================
 // DOMBindings implementation
 // ============================================================================
@@ -73,6 +179,10 @@ void DOMBindings::register_event_target() {
     // addEventListener, removeEventListener, dispatchEvent
 }
 
+js::Value DOMBindings::wrap_node_for_script(dom::Node* node) {
+    return wrap_node(node);
+}
+
 js::Value DOMBindings::wrap_node(dom::Node* node) {
     if (!node) {
         return js::Value::null();
@@ -84,23 +194,16 @@ js::Value DOMBindings::wrap_node(dom::Node* node) {
         return js::Value(it->second);
     }
 
-    // Create wrapper object
-    auto wrapper = std::make_shared<js::Object>();
-
-    // Add common node properties
-    wrapper->set_property("nodeType"_s, js::Value(static_cast<f64>(static_cast<int>(node->node_type()))));
-    wrapper->set_property("nodeName"_s, js::Value(node->node_name()));
+    std::shared_ptr<js::Object> wrapper;
 
     if (auto* element = dynamic_cast<dom::Element*>(node)) {
-        // Element-specific properties
-        wrapper->set_property("tagName"_s, js::Value(element->tag_name()));
-        wrapper->set_property("id"_s, js::Value(element->id()));
-        wrapper->set_property("className"_s, js::Value(element->class_name()));
-
-        // innerHTML (simplified - getter only)
-        wrapper->set_property("innerHTML"_s, js::Value(element->inner_html()));
+        wrapper = std::make_shared<ElementWrapper>(element);
     } else if (auto* text = dynamic_cast<dom::Text*>(node)) {
-        wrapper->set_property("textContent"_s, js::Value(text->data()));
+        wrapper = std::make_shared<TextWrapper>(text);
+    } else {
+        wrapper = std::make_shared<js::Object>();
+        wrapper->set_property("nodeType"_s, js::Value(static_cast<f64>(static_cast<int>(node->node_type()))));
+        wrapper->set_property("nodeName"_s, js::Value(node->node_name()));
     }
 
     // Cache and return

@@ -6,6 +6,7 @@
 #include "tree_builder/constants.hpp"
 #include "lithium/dom/text.hpp"
 #include <algorithm>
+#include <optional>
 #include <unordered_set>
 
 namespace lithium::html {
@@ -668,13 +669,13 @@ void TreeBuilder::adoption_agency_algorithm(const String& tag_name) {
 
         // 3. Find furthest block
         dom::Element* furthest_block = nullptr;
-        auto formatting_index = static_cast<int>(stack_it - m_open_elements.begin());
-        int furthest_index = -1;
-        for (int i = formatting_index + 1; i < static_cast<int>(m_open_elements.size()); ++i) {
-            auto name = m_open_elements[i]->local_name();
+        auto formatting_index = static_cast<isize>(stack_it - m_open_elements.begin());
+        std::optional<isize> furthest_index;
+        for (isize i = formatting_index + 1; i < static_cast<isize>(m_open_elements.size()); ++i) {
+            auto name = m_open_elements[static_cast<usize>(i)]->local_name();
             if (is_special_element(name)) {
-                furthest_block = m_open_elements[i].get();
-                furthest_index = i;
+                furthest_block = m_open_elements[static_cast<usize>(i)].get();
+                furthest_index = static_cast<isize>(i);
                 break;
             }
         }
@@ -687,15 +688,15 @@ void TreeBuilder::adoption_agency_algorithm(const String& tag_name) {
         }
 
         auto* common_ancestor = (formatting_index > 0)
-            ? m_open_elements[formatting_index - 1].get()
+            ? m_open_elements[static_cast<usize>(formatting_index - 1)].get()
             : nullptr;
 
         dom::Element* furthest_block_node = furthest_block;
         dom::Element* last_node = furthest_block;
 
         // 4. Walk back from furthest block to formatting element
-        for (int i = furthest_index - 1; i >= formatting_index; --i) {
-            auto* current = m_open_elements[i].get();
+        for (isize i = *furthest_index - 1; i >= formatting_index; --i) {
+            auto* current = m_open_elements[static_cast<usize>(i)].get();
 
             auto afe_match = std::find_if(m_active_formatting_elements.begin(),
                 m_active_formatting_elements.end(),
@@ -715,7 +716,7 @@ void TreeBuilder::adoption_agency_algorithm(const String& tag_name) {
 
             auto clone = create_element_for_token(std::get<TagToken>(afe_match->token));
             afe_match->element = clone;
-            m_open_elements[i] = clone;
+            m_open_elements[static_cast<usize>(i)] = clone;
 
             if (last_node->parent_node()) {
                 last_node->parent_node()->remove_child(RefPtr<dom::Node>(last_node));

@@ -10,6 +10,20 @@ namespace lithium::html {
 
 namespace {
 
+struct FragmentParserRegistrar {
+    FragmentParserRegistrar() {
+        dom::register_html_fragment_parser([](const String& html, dom::Element* context) {
+            return parse_html_fragment(html, context);
+        });
+    }
+};
+
+static FragmentParserRegistrar s_fragment_parser_registrar;
+
+} // namespace
+
+namespace {
+
 String strip_utf8_bom(const String& input) {
     auto view = input.view();
     if (view.size() >= 3 && static_cast<unsigned char>(view[0]) == 0xEF &&
@@ -53,8 +67,9 @@ std::optional<String> sniff_meta_charset(const String& input) {
     usize end = start;
     while (end < lower.length()) {
         char c = lower[end];
+        auto cp = static_cast<unicode::CodePoint>(static_cast<unsigned char>(c));
         if ((quote && c == quote) || (!quote && (c == '"' || c == '\'')) ||
-            unicode::is_ascii_whitespace(c) || c == ';') {
+            unicode::is_ascii_whitespace(cp) || c == ';') {
             break;
         }
         ++end;
@@ -147,7 +162,8 @@ std::optional<String> charset_from_token(const Token& token) {
     usize end = start;
     while (end < lower.length()) {
         char c = lower[end];
-        if (unicode::is_ascii_whitespace(c) || c == ';' || c == '"' || c == '\'') {
+        auto cp = static_cast<unicode::CodePoint>(static_cast<unsigned char>(c));
+        if (unicode::is_ascii_whitespace(cp) || c == ';' || c == '"' || c == '\'') {
             break;
         }
         ++end;

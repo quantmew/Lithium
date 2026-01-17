@@ -7,6 +7,26 @@ lithium_add_module_tests(core
         core/test_string.cpp
 )
 
+# DOM module tests
+set(DOM_TEST_SOURCES
+    dom/test_inner_html.cpp
+)
+set(DOM_TEST_DEPENDENCIES
+    lithium_html
+)
+
+if(TARGET lithium_bindings)
+    list(APPEND DOM_TEST_SOURCES dom/test_dom_bindings.cpp)
+    list(APPEND DOM_TEST_DEPENDENCIES lithium_bindings lithium_js)
+endif()
+
+lithium_add_module_tests(dom
+    SOURCES
+        ${DOM_TEST_SOURCES}
+    DEPENDENCIES
+        ${DOM_TEST_DEPENDENCIES}
+)
+
 # HTML module tests
 lithium_add_module_tests(html
     SOURCES

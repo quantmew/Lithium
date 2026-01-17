@@ -9,6 +9,16 @@
 
 namespace lithium::dom {
 
+namespace {
+
+HTMLFragmentParser g_fragment_parser{nullptr};
+
+} // namespace
+
+void register_html_fragment_parser(HTMLFragmentParser parser) {
+    g_fragment_parser = parser;
+}
+
 // ============================================================================
 // Element
 // ============================================================================
@@ -311,11 +321,33 @@ String Element::inner_html() const {
     return result;
 }
 
-void Element::set_inner_html(const String& /*html*/) {
-    // TODO: Parse HTML and set children
-    // For now, just clear children
+void Element::set_inner_html(const String& html) {
+    // Remove existing children first
     while (first_child()) {
         remove_child(RefPtr<Node>(first_child()));
+    }
+
+    auto* doc = owner_document();
+    if (!g_fragment_parser || !doc) {
+        if (doc && !html.empty()) {
+            append_child(doc->create_text_node(html));
+        }
+        return;
+    }
+
+    auto fragment = g_fragment_parser(html, this);
+    if (!fragment) {
+        return;
+    }
+
+    while (fragment->first_child()) {
+        auto child = RefPtr<Node>(fragment->first_child());
+        fragment->remove_child(child);
+
+        auto adopted = doc->adopt_node(child);
+        if (adopted) {
+            append_child(adopted);
+        }
     }
 }
 

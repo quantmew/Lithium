@@ -42,6 +42,9 @@ private:
     void register_event();
     void register_event_target();
 
+    // For embedding/tests: wrap a DOM node as a JS value
+    [[nodiscard]] js::Value wrap_node_for_script(dom::Node* node);
+
     // Helper: wrap DOM node as JS object
     [[nodiscard]] js::Value wrap_node(dom::Node* node);
 

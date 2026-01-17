@@ -6,6 +6,8 @@
 
 namespace lithium::dom {
 
+class DocumentFragment;
+
 // ============================================================================
 // Attribute
 // ============================================================================
@@ -122,5 +124,12 @@ public:
     [[nodiscard]] std::optional<String> get_data_attribute(const String& name) const;
     void set_data_attribute(const String& name, const String& value);
 };
+
+// ============================================================================
+// HTML integration hooks
+// ============================================================================
+
+using HTMLFragmentParser = RefPtr<DocumentFragment> (*)(const String& html, Element* context);
+void register_html_fragment_parser(HTMLFragmentParser parser);
 
 } // namespace lithium::dom
