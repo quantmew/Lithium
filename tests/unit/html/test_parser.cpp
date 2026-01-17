@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "lithium/html/parser.hpp"
+#include "lithium/core/string.hpp"
 
 using namespace lithium;
 using namespace lithium::html;
@@ -291,4 +292,535 @@ TEST_F(HTMLParserTest, RcdataAndRawtextEndTagsAllowTrailingWhitespace) {
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->tag_name(), String("p"));
     EXPECT_EQ(p->text_content(), String("after"));
+}
+
+TEST_F(HTMLParserTest, LegacyNamedReferenceWithoutSemicolonStillDecodes) {
+    auto doc = parse("<div>&amp and more</div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+    EXPECT_EQ(div->text_content(), String("& and more"));
+}
+
+TEST_F(HTMLParserTest, NonLegacyReferenceWithoutSemicolonRejectedWhenFollowedByAlpha) {
+    auto doc = parse("<div>&notin members</div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+    EXPECT_EQ(div->text_content(), String("&notin members"));
+}
+
+TEST_F(HTMLParserTest, NumericReferenceControlMappingAndInvalids) {
+    auto doc = parse("<div>&#128; &#xD800; &#x110000;</div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+
+    String expected;
+    expected.append(String::from_code_point(0x20AC)); // control mapping 0x80 -> €
+    expected.append(" "_s);
+    expected.append(String::from_code_point(unicode::REPLACEMENT_CHARACTER));
+    expected.append(" "_s);
+    expected.append(String::from_code_point(unicode::REPLACEMENT_CHARACTER));
+
+    EXPECT_EQ(div->text_content(), expected);
+}
+
+TEST_F(HTMLParserTest, DuplicateAttributesKeepFirst) {
+    auto doc = parse("<div id=\"one\" ID=\"two\"></div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+    EXPECT_EQ(div->id(), String("one"));
+}
+
+TEST_F(HTMLParserTest, SelfClosingNonVoidRaisesErrorButInserts) {
+    Parser parser;
+    auto doc = parser.parse(String("<div/>"));
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+    EXPECT_EQ(div->local_name(), String("div"));
+    EXPECT_FALSE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, QuirksAndLimitedQuirksFromDoctype) {
+    Parser parser1;
+    auto doc1 = parser1.parse(String("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\"><html></html>"));
+    EXPECT_EQ(doc1->quirks_mode(), dom::Document::QuirksMode::Quirks);
+
+    Parser parser2;
+    auto doc2 = parser2.parse(String("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\"><html></html>"));
+    EXPECT_EQ(doc2->quirks_mode(), dom::Document::QuirksMode::LimitedQuirks);
+
+    Parser parser3;
+    auto doc3 = parser3.parse(String("<!DOCTYPE html><html></html>"));
+    EXPECT_EQ(doc3->quirks_mode(), dom::Document::QuirksMode::NoQuirks);
+}
+TEST_F(HTMLParserTest, SelectOptionAutoCloseAndOptgroup) {
+    auto doc = parse("<select><option>One<option>Two<optgroup label=\"g\"><option>Three</optgroup><option>Four</select>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* select = body->first_element_child();
+    ASSERT_NE(select, nullptr);
+    ASSERT_EQ(select->local_name(), String("select"));
+
+    std::vector<String> values;
+    for (auto* child = select->first_element_child(); child; child = child->next_element_sibling()) {
+        if (child->local_name() == "option"_s) {
+            values.push_back(child->text_content());
+        } else if (child->local_name() == "optgroup"_s) {
+            auto* opt = child->first_element_child();
+            if (opt) values.push_back(opt->text_content());
+        }
+    }
+    ASSERT_EQ(values.size(), 4u);
+    EXPECT_EQ(values[0], String("One"));
+    EXPECT_EQ(values[1], String("Two"));
+    EXPECT_EQ(values[2], String("Three"));
+    EXPECT_EQ(values[3], String("Four"));
+}
+
+TEST_F(HTMLParserTest, SelectEndsWhenTextareaAppears) {
+    auto doc = parse("<select><option>One<textarea>txt</textarea>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* select = body->first_element_child();
+    ASSERT_NE(select, nullptr);
+    EXPECT_EQ(select->local_name(), String("select"));
+    ASSERT_EQ(select->child_element_count(), 1u);
+
+    auto* textarea = select->next_element_sibling();
+    ASSERT_NE(textarea, nullptr);
+    EXPECT_EQ(textarea->local_name(), String("textarea"));
+}
+
+TEST_F(HTMLParserTest, TemplateInsertionModeSwitch) {
+    auto doc = parse("<template><select><option>One</template><p>After</p>");
+
+    auto templates = doc->get_elements_by_tag_name("template"_s);
+    ASSERT_FALSE(templates.empty());
+    auto* tmpl = templates.front();
+    ASSERT_NE(tmpl, nullptr);
+    ASSERT_NE(tmpl->first_element_child(), nullptr);
+    EXPECT_EQ(tmpl->first_element_child()->local_name(), String("select"));
+
+    auto ps = doc->get_elements_by_tag_name("p"_s);
+    ASSERT_EQ(ps.size(), 1u);
+    auto* p = ps.front();
+    ASSERT_NE(p, nullptr);
+    auto* parent = p->parent_node()->as_element();
+    ASSERT_NE(parent, nullptr);
+    EXPECT_NE(parent->local_name(), String("template"));
+    EXPECT_EQ(p->local_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("After"));
+}
+
+TEST_F(HTMLParserTest, FramesetParsing) {
+    auto doc = parse("<frameset><frame src=\"a\"><frameset><frame src=\"b\"></frameset></frameset>");
+
+    auto* html = doc->document_element();
+    ASSERT_NE(html, nullptr);
+    auto* frameset = html->first_element_child();
+    while (frameset && frameset->local_name() == "head"_s) {
+        frameset = frameset->next_element_sibling();
+    }
+    ASSERT_NE(frameset, nullptr);
+    EXPECT_EQ(frameset->local_name(), String("frameset"));
+    ASSERT_NE(frameset->first_element_child(), nullptr);
+    EXPECT_EQ(frameset->first_element_child()->local_name(), String("frame"));
+}
+
+TEST_F(HTMLParserTest, PlaintextTreatsMarkupAsText) {
+    auto doc = parse("<plaintext>Hello<div>not a tag</div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* plaintext = body->first_element_child();
+    ASSERT_NE(plaintext, nullptr);
+    EXPECT_EQ(plaintext->local_name(), String("plaintext"));
+    ASSERT_TRUE(plaintext->first_child()->is_text());
+    EXPECT_EQ(plaintext->child_nodes().size(), 1u);
+    EXPECT_EQ(plaintext->text_content(), String("Hello<div>not a tag</div>"));
+}
+
+TEST_F(HTMLParserTest, CaptionContentDoesNotWrapTableRows) {
+    auto doc = parse("<table><caption>Title<tr><td>Cell</td></tr></table>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* table = body->first_element_child();
+    ASSERT_NE(table, nullptr);
+    ASSERT_EQ(table->local_name(), String("table"));
+
+    auto* caption = table->first_element_child();
+    ASSERT_NE(caption, nullptr);
+    EXPECT_EQ(caption->local_name(), String("caption"));
+    EXPECT_EQ(caption->text_content(), String("Title"));
+    if (caption->first_element_child()) {
+        EXPECT_NE(caption->first_element_child()->local_name(), String("tr"));
+    }
+
+    auto* after_caption = caption->next_element_sibling();
+    ASSERT_NE(after_caption, nullptr);
+    EXPECT_TRUE(after_caption->local_name() == String("tbody") ||
+                after_caption->local_name() == String("tr"));
+}
+
+TEST_F(HTMLParserTest, ColTagsImplyColgroup) {
+    auto doc = parse("<table><col span=\"2\"><tr><td>Cell</td></tr></table>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* table = body->first_element_child();
+    ASSERT_NE(table, nullptr);
+    ASSERT_EQ(table->local_name(), String("table"));
+
+    auto* first_child = table->first_element_child();
+    ASSERT_NE(first_child, nullptr);
+    EXPECT_EQ(first_child->local_name(), String("colgroup"));
+    auto* col = first_child->first_element_child();
+    ASSERT_NE(col, nullptr);
+    EXPECT_EQ(col->local_name(), String("col"));
+    EXPECT_EQ(col->get_attribute("span"_s).value_or(String()), String("2"));
+}
+
+TEST_F(HTMLParserTest, ParseFragmentWithContextElement) {
+    Parser parser;
+    auto context_doc = make_ref<dom::Document>();
+    auto context = context_doc->create_element("div"_s);
+
+    auto fragment = parser.parse_fragment("<p>Hello <b>world</b>", context.get());
+    ASSERT_NE(fragment, nullptr);
+    ASSERT_EQ(fragment->child_nodes().size(), 1u);
+
+    auto* p = fragment->child_nodes()[0]->as_element();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->local_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("Hello world"));
+}
+
+TEST_F(HTMLParserTest, FragmentRespectsTableContext) {
+    Parser parser;
+    auto context_doc = make_ref<dom::Document>();
+    auto table_context = context_doc->create_element("table"_s);
+
+    auto fragment = parser.parse_fragment("<tr><td>Cell</td></tr>", table_context.get());
+    ASSERT_NE(fragment, nullptr);
+    ASSERT_GE(fragment->child_nodes().size(), 1u);
+
+    auto* first = fragment->child_nodes()[0]->as_element();
+    ASSERT_NE(first, nullptr);
+    if (first->local_name() == String("tbody")) {
+        first = first->first_element_child();
+    }
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->local_name(), String("tr"));
+    auto* cell = first->first_element_child();
+    ASSERT_NE(cell, nullptr);
+    EXPECT_EQ(cell->local_name(), String("td"));
+    EXPECT_EQ(cell->text_content(), String("Cell"));
+}
+
+TEST_F(HTMLParserTest, SvgNamespaceAndIntegrationPoint) {
+    auto doc = parse("<svg><lineargradient id='g'></lineargradient><foreignObject><p>hi</p></foreignObject></svg>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* svg = body->first_element_child();
+    ASSERT_NE(svg, nullptr);
+    EXPECT_EQ(svg->namespace_uri(), String("http://www.w3.org/2000/svg"));
+    EXPECT_EQ(svg->local_name(), String("svg"));
+
+    auto* gradient = svg->first_element_child();
+    ASSERT_NE(gradient, nullptr);
+    EXPECT_EQ(gradient->local_name(), String("linearGradient"));
+    EXPECT_EQ(gradient->namespace_uri(), String("http://www.w3.org/2000/svg"));
+
+    auto* foreign = gradient->next_element_sibling();
+    ASSERT_NE(foreign, nullptr);
+    EXPECT_EQ(foreign->local_name(), String("foreignObject"));
+    ASSERT_NE(foreign->first_element_child(), nullptr);
+    auto* p = foreign->first_element_child();
+    EXPECT_EQ(p->namespace_uri(), String()); // HTML namespace
+    EXPECT_EQ(p->local_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("hi"));
+}
+
+TEST_F(HTMLParserTest, MathmlNamespaceAndAnnotationIntegration) {
+    auto doc = parse("<math><mi>x</mi><annotation-xml encoding='application/xhtml+xml'><p>math html</p></annotation-xml></math>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* math = body->first_element_child();
+    ASSERT_NE(math, nullptr);
+    EXPECT_EQ(math->namespace_uri(), String("http://www.w3.org/1998/Math/MathML"));
+    EXPECT_EQ(math->local_name(), String("math"));
+
+    auto* mi = math->first_element_child();
+    ASSERT_NE(mi, nullptr);
+    EXPECT_EQ(mi->namespace_uri(), String("http://www.w3.org/1998/Math/MathML"));
+    EXPECT_EQ(mi->local_name(), String("mi"));
+
+    auto* annotation = mi->next_element_sibling();
+    ASSERT_NE(annotation, nullptr);
+    EXPECT_EQ(annotation->local_name(), String("annotation-xml"));
+
+    auto* p = annotation->first_element_child();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->namespace_uri(), String());
+    EXPECT_EQ(p->local_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("math html"));
+}
+
+TEST_F(HTMLParserTest, CharacterReferencesFullTableAndBoundaries) {
+    auto doc = parse("<div>&NotEqualTilde; &#0; &#x10FFFF; &Aacute and &Aacute1</div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+
+    String expected;
+    expected.append(String::from_code_point(0x2242));
+    expected.append(String::from_code_point(0x0338));
+    expected.append(" "_s);
+    expected.append(String::from_code_point(unicode::REPLACEMENT_CHARACTER));
+    expected.append(" "_s);
+    expected.append(String::from_code_point(0x10FFFF));
+    expected.append(" "_s);
+    expected.append(String::from_code_point(0x00C1));
+    expected.append(" and "_s);
+    expected.append("&Aacute1"_s);
+
+    EXPECT_EQ(div->text_content(), expected);
+}
+
+TEST_F(HTMLParserTest, ScriptEndTagAttributesAndCaseInsensitive) {
+    auto doc = parse("<script><!-- test --></SCRIPT data-x=\"1\"><p>after</p>");
+
+    auto* head = doc->head();
+    ASSERT_NE(head, nullptr);
+    auto* script = head->first_element_child();
+    ASSERT_NE(script, nullptr);
+    EXPECT_EQ(script->local_name(), String("script"));
+    EXPECT_EQ(script->text_content(), String("<!-- test -->"));
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* p = body->first_element_child();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->local_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("after"));
+}
+
+TEST_F(HTMLParserTest, ScriptDoubleEscapedKeepsSingleScript) {
+    Parser parser;
+    auto doc = parser.parse(String("<script><!--<script></script>--></script>"));
+
+    auto scripts = doc->get_elements_by_tag_name("script"_s);
+    ASSERT_EQ(scripts.size(), 1u);
+    auto* script = scripts.front();
+    ASSERT_NE(script, nullptr);
+    EXPECT_FALSE(script->text_content().empty());
+    EXPECT_FALSE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, SelectOptgroupAndOptionScopeClosing) {
+    auto doc = parse("<select><optgroup label='g'><option>One</select><p>after</p>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* select = body->first_element_child();
+    ASSERT_NE(select, nullptr);
+    EXPECT_EQ(select->local_name(), String("select"));
+
+    auto* optgroup = select->first_element_child();
+    ASSERT_NE(optgroup, nullptr);
+    EXPECT_EQ(optgroup->local_name(), String("optgroup"));
+    auto* option = optgroup->first_element_child();
+    ASSERT_NE(option, nullptr);
+    EXPECT_EQ(option->local_name(), String("option"));
+    EXPECT_EQ(option->text_content(), String("One"));
+
+    auto* p = select->next_element_sibling();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->local_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("after"));
+}
+
+TEST_F(HTMLParserTest, AfterFramesetTextIgnored) {
+    Parser parser;
+    auto doc = parser.parse(String("<frameset></frameset>text"));
+
+    auto* html = doc->document_element();
+    ASSERT_NE(html, nullptr);
+    dom::Element* frameset = nullptr;
+    for (auto* child = html->first_element_child(); child; child = child->next_element_sibling()) {
+        if (child->local_name() == "frameset"_s) {
+            frameset = child;
+            break;
+        }
+    }
+    ASSERT_NE(frameset, nullptr);
+    EXPECT_EQ(doc->body(), nullptr);
+    EXPECT_FALSE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, AdoptionAgencyRepairsMisnestedFormatting) {
+    Parser parser;
+    auto doc = parser.parse(String("<p><b><i></b>text</i></p>"));
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* p = body->first_element_child();
+    ASSERT_NE(p, nullptr);
+    auto* b = p->first_element_child();
+    ASSERT_NE(b, nullptr);
+    EXPECT_EQ(b->local_name(), String("b"));
+    auto* i = b->first_element_child();
+    ASSERT_NE(i, nullptr);
+    EXPECT_EQ(i->local_name(), String("i"));
+    EXPECT_EQ(i->text_content(), String("text"));
+    EXPECT_FALSE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, ForeignObjectThenSvgKeepsNamespaces) {
+    auto doc = parse("<svg><foreignObject><p>html</p></foreignObject><g><title>t</title></g></svg><p>after</p>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* svg = body->first_element_child();
+    ASSERT_NE(svg, nullptr);
+    EXPECT_EQ(svg->namespace_uri(), String("http://www.w3.org/2000/svg"));
+
+    auto* foreign = svg->first_element_child();
+    ASSERT_NE(foreign, nullptr);
+    EXPECT_EQ(foreign->local_name(), String("foreignObject"));
+    auto* p_html = foreign->first_element_child();
+    ASSERT_NE(p_html, nullptr);
+    EXPECT_EQ(p_html->namespace_uri(), String());
+    EXPECT_EQ(p_html->text_content(), String("html"));
+
+    auto* group = foreign->next_element_sibling();
+    ASSERT_NE(group, nullptr);
+    EXPECT_EQ(group->namespace_uri(), String("http://www.w3.org/2000/svg"));
+    auto* title = group->first_element_child();
+    ASSERT_NE(title, nullptr);
+    EXPECT_EQ(title->namespace_uri(), String("http://www.w3.org/2000/svg"));
+    EXPECT_EQ(title->text_content(), String("t"));
+
+    auto* after = svg->next_element_sibling();
+    ASSERT_NE(after, nullptr);
+    EXPECT_EQ(after->namespace_uri(), String());
+    EXPECT_EQ(after->local_name(), String("p"));
+    EXPECT_EQ(after->text_content(), String("after"));
+}
+
+TEST_F(HTMLParserTest, AdditionalQuirksTriggers) {
+    Parser parser1;
+    auto doc1 = parser1.parse(String("<!DOCTYPE html SYSTEM \"http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd\"><html></html>"));
+    EXPECT_EQ(doc1->quirks_mode(), dom::Document::QuirksMode::Quirks);
+
+    Parser parser2;
+    auto doc2 = parser2.parse(String("<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Frameset//EN\" \"http://www.w3.org/TR/html4/frameset.dtd\"><html></html>"));
+    EXPECT_EQ(doc2->quirks_mode(), dom::Document::QuirksMode::LimitedQuirks);
+
+    Parser parser3;
+    auto doc3 = parser3.parse(String("<!DOCTYPE><html></html>"));
+    EXPECT_EQ(doc3->quirks_mode(), dom::Document::QuirksMode::Quirks);
+}
+
+TEST_F(HTMLParserTest, VoidSelfClosingAcknowledged) {
+    Parser parser;
+    auto doc = parser.parse(String("<br/><img src='x'/>"));
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    ASSERT_EQ(body->child_element_count(), 2u);
+    EXPECT_EQ(body->first_element_child()->local_name(), String("br"));
+    EXPECT_EQ(body->first_element_child()->next_element_sibling()->local_name(), String("img"));
+    EXPECT_TRUE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, Utf8BomIsIgnored) {
+    Parser parser;
+    auto doc = parser.parse(String("\xEF\xBB\xBF<html><body><p>hi</p></body></html>"));
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* p = body->first_element_child();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->text_content(), String("hi"));
+    EXPECT_TRUE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, MetaCharsetUtf8Accepted) {
+    Parser parser;
+    auto doc = parser.parse(String("<meta charset=\"UTF-8\"><p>ok</p>"));
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* p = body->first_element_child();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->text_content(), String("ok"));
+    EXPECT_TRUE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, UnsupportedMetaCharsetReportsError) {
+    Parser parser;
+    auto doc = parser.parse(String("<meta charset=\"windows-1252\"><p>&#233;</p>"));
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* p = body->first_element_child();
+    ASSERT_NE(p, nullptr);
+    String expected;
+    expected.append(String::from_code_point(233));
+    EXPECT_EQ(p->text_content(), expected);
+    EXPECT_FALSE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, DocumentWriteStreamingBuildsSingleTree) {
+    Parser parser;
+    parser.begin();
+    parser.write("<html><body><div>");
+    parser.write("<span>hello");
+    parser.write("</span>");
+    parser.write("</div>");
+    auto doc = parser.finish();
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* div = body->first_element_child();
+    ASSERT_NE(div, nullptr);
+    auto* span = div->first_element_child();
+    ASSERT_NE(span, nullptr);
+    EXPECT_EQ(span->text_content(), String("hello"));
+    EXPECT_TRUE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, DocumentWriteAcrossOpenElements) {
+    Parser parser;
+    parser.begin();
+    parser.write("<p>first ");
+    parser.write("second");
+    parser.write("</p>");
+    auto doc = parser.finish();
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* p = body->first_element_child();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->text_content(), String("first second"));
 }

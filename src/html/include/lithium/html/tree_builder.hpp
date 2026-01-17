@@ -82,6 +82,7 @@ public:
 
     // Fragment parsing context
     void set_context_element(dom::Element* context) { m_context_element = context; }
+    void prepare_for_fragment(RefPtr<dom::Element> context_element);
 
     // Get tokenizer (for state adjustment)
     [[nodiscard]] Tokenizer* tokenizer() const { return m_tokenizer; }
@@ -136,8 +137,8 @@ private:
     [[nodiscard]] bool stack_contains_in_table_scope(const String& tag_name) const;
     [[nodiscard]] bool stack_contains_in_select_scope(const String& tag_name) const;
 
-    // Active formatting elements
-    void push_active_formatting_element(RefPtr<dom::Element> element, const Token& token);
+// Active formatting elements
+void push_active_formatting_element(RefPtr<dom::Element> element, const Token& token);
     void push_marker();
     void reconstruct_active_formatting_elements();
     void clear_active_formatting_to_last_marker();
@@ -168,6 +169,8 @@ private:
     // Reset insertion mode
     void reset_insertion_mode_appropriately();
 
+    void acknowledge_self_closing_flag() { m_self_closing_flag_acknowledged = true; }
+
     // Document
     RefPtr<dom::Document> m_document;
 
@@ -191,6 +194,7 @@ private:
     bool m_scripting_enabled{false};
     bool m_frameset_ok{true};
     bool m_foster_parenting{false};
+    bool m_self_closing_flag_acknowledged{true};
 
     // Pending table characters
     std::vector<unicode::CodePoint> m_pending_table_characters;
@@ -203,3 +207,8 @@ private:
 };
 
 } // namespace lithium::html
+
+// Shared helper for SVG camel-casing
+namespace lithium::html {
+String svg_camel_case(const String& name_lower);
+}

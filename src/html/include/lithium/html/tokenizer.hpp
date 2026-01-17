@@ -165,6 +165,12 @@ public:
     void set_token_callback(TokenCallback callback) { m_token_callback = std::move(callback); }
     void set_error_callback(ErrorCallback callback) { m_error_callback = std::move(callback); }
 
+    // Streaming support
+    void enable_streaming(bool streaming) { m_streaming = streaming; }
+    void append_input(const String& more);
+    void mark_end_of_stream();
+    [[nodiscard]] bool streaming() const { return m_streaming; }
+
     // Run tokenizer
     void run();
 
@@ -319,6 +325,11 @@ private:
 
     // Token queue for next_token() interface
     std::vector<Token> m_token_queue;
+
+    // Streaming
+    bool m_streaming{false};
+    bool m_end_of_stream{true};
+    bool m_eof_emitted{false};
 };
 
 } // namespace lithium::html

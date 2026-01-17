@@ -369,9 +369,14 @@ void Tokenizer::handle_after_doctype_name_state() {
     consume();
 
     if (*cp == '\t' || *cp == '\n' || *cp == '\f' || *cp == ' ') {
+        // stay in this state
     } else if (*cp == '>') {
         m_state = TokenizerState::Data;
         emit_current_token();
+    } else if ((*cp == 'p' || *cp == 'P') && consume_if_match("ublic", true)) {
+        m_state = TokenizerState::AfterDOCTYPEPublicKeyword;
+    } else if ((*cp == 's' || *cp == 'S') && consume_if_match("ystem", true)) {
+        m_state = TokenizerState::AfterDOCTYPESystemKeyword;
     } else {
         parse_error("invalid-character-sequence-after-doctype-name"_s);
         std::get<DoctypeToken>(*m_current_token).force_quirks = true;

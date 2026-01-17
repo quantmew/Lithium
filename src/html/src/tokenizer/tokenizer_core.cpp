@@ -12,22 +12,47 @@ Tokenizer::Tokenizer() = default;
 void Tokenizer::set_input(const String& input) {
     m_input = input;
     m_position = 0;
+    m_mark = 0;
+    m_eof_emitted = false;
+    m_end_of_stream = !m_streaming;
 }
 
 void Tokenizer::set_input(std::string_view input) {
     m_input = String(input);
     m_position = 0;
+    m_mark = 0;
+    m_eof_emitted = false;
+    m_end_of_stream = !m_streaming;
+}
+
+void Tokenizer::append_input(const String& more) {
+    if (m_streaming && !m_end_of_stream) {
+        m_input.append(more);
+    }
+}
+
+void Tokenizer::mark_end_of_stream() {
+    m_end_of_stream = true;
 }
 
 void Tokenizer::run() {
+    m_end_of_stream = true;
     while (m_position <= m_input.length()) {
         process_state();
     }
 }
 
 std::optional<Token> Tokenizer::next_token() {
-    while (m_token_queue.empty() && m_position <= m_input.length()) {
-        process_state();
+    while (m_token_queue.empty()) {
+        if (m_streaming && !m_end_of_stream && m_position >= m_input.length()) {
+            return std::nullopt;
+        }
+
+        if (m_position <= m_input.length()) {
+            process_state();
+        } else {
+            break;
+        }
     }
 
     if (!m_token_queue.empty()) {
@@ -121,6 +146,8 @@ void Tokenizer::emit_current_token() {
 }
 
 void Tokenizer::emit_eof() {
+    if (m_eof_emitted) return;
+    m_eof_emitted = true;
     emit(EndOfFileToken{});
     m_position = m_input.length() + 1;
 }
@@ -132,6 +159,10 @@ void Tokenizer::parse_error(const String& message) {
 }
 
 void Tokenizer::process_state() {
+    if (m_streaming && !m_end_of_stream && m_position >= m_input.length()) {
+        return;
+    }
+
     switch (m_state) {
         case TokenizerState::Data:
             handle_data_state();

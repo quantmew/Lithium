@@ -3,6 +3,7 @@
 #include "tokenizer.hpp"
 #include "tree_builder.hpp"
 #include "lithium/dom/document.hpp"
+#include <memory>
 
 namespace lithium::html {
 
@@ -22,6 +23,12 @@ public:
     [[nodiscard]] RefPtr<dom::DocumentFragment> parse_fragment(
         const String& html, dom::Element* context_element);
 
+    // Incremental parsing (document.write style)
+    void begin();
+    void write(const String& html);
+    [[nodiscard]] RefPtr<dom::Document> finish();
+    [[nodiscard]] RefPtr<dom::Document> document() const { return m_streaming_document; }
+
     // Scripting support
     void set_scripting_enabled(bool enabled) { m_scripting_enabled = enabled; }
     [[nodiscard]] bool scripting_enabled() const { return m_scripting_enabled; }
@@ -39,6 +46,13 @@ private:
     bool m_scripting_enabled{false};
     ErrorCallback m_error_callback;
     std::vector<String> m_errors;
+
+    // Streaming/document.write helpers
+    RefPtr<dom::Document> m_streaming_document;
+    std::unique_ptr<Tokenizer> m_streaming_tokenizer;
+    std::unique_ptr<TreeBuilder> m_streaming_builder;
+    bool m_streaming_open{false};
+    bool m_seen_first_chunk{false};
 };
 
 // ============================================================================

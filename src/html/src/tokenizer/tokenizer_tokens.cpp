@@ -17,10 +17,10 @@ std::optional<String> TagToken::get_attribute(const String& name) const {
 }
 
 void TagToken::set_attribute(const String& name, const String& value) {
-    for (auto& [attr_name, attr_value] : attributes) {
-        if (attr_name == name) {
-            attr_value = value;
-            return;
+    auto lower_name = name.to_lowercase();
+    for (const auto& [attr_name, attr_value] : attributes) {
+        if (attr_name.to_lowercase() == lower_name) {
+            return; // Duplicate attribute ignored (first wins)
         }
     }
     attributes.emplace_back(name, value);

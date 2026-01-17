@@ -72,6 +72,14 @@ void TreeBuilder::process_in_body(const Token& token) {
 
         if (tag.name == "frameset"_s) {
             parse_error("Unexpected frameset tag"_s);
+            if (!m_open_elements.empty() && m_open_elements[0]->local_name() == "html"_s) {
+                while (current_node()) {
+                    pop_current_element();
+                }
+                auto element = create_element_for_token(tag);
+                insert_element(element);
+                m_insertion_mode = InsertionMode::InFrameset;
+            }
             return;
         }
 
@@ -198,6 +206,7 @@ void TreeBuilder::process_in_body(const Token& token) {
             insert_element(element);
             pop_current_element();
             m_frameset_ok = false;
+            if (tag.self_closing) acknowledge_self_closing_flag();
             return;
         }
 
@@ -210,6 +219,7 @@ void TreeBuilder::process_in_body(const Token& token) {
             if (!type_attr || type_attr->to_lowercase() != "hidden"_s) {
                 m_frameset_ok = false;
             }
+            if (tag.self_closing) acknowledge_self_closing_flag();
             return;
         }
 
@@ -219,6 +229,24 @@ void TreeBuilder::process_in_body(const Token& token) {
             insert_element(element);
             pop_current_element();
             m_frameset_ok = false;
+            if (tag.self_closing) acknowledge_self_closing_flag();
+            return;
+        }
+
+        if (tag.name == "select"_s) {
+            close_p();
+            reconstruct_active_formatting_elements();
+            auto element = create_element_for_token(tag);
+            insert_element(element);
+            m_frameset_ok = false;
+            if (m_insertion_mode == InsertionMode::InTable ||
+                m_insertion_mode == InsertionMode::InTableBody ||
+                m_insertion_mode == InsertionMode::InRow ||
+                m_insertion_mode == InsertionMode::InCell) {
+                m_insertion_mode = InsertionMode::InSelectInTable;
+            } else {
+                m_insertion_mode = InsertionMode::InSelect;
+            }
             return;
         }
 
@@ -228,6 +256,19 @@ void TreeBuilder::process_in_body(const Token& token) {
             insert_element(element);
             if (m_tokenizer) {
                 m_tokenizer->set_state(TokenizerState::RCDATA);
+            }
+            m_original_insertion_mode = m_insertion_mode;
+            m_frameset_ok = false;
+            m_insertion_mode = InsertionMode::Text;
+            return;
+        }
+
+        if (tag.name == "plaintext"_s) {
+            close_p();
+            auto element = create_element_for_token(tag);
+            insert_element(element);
+            if (m_tokenizer) {
+                m_tokenizer->set_state(TokenizerState::PLAINTEXT);
             }
             m_original_insertion_mode = m_insertion_mode;
             m_frameset_ok = false;
@@ -255,6 +296,10 @@ void TreeBuilder::process_in_body(const Token& token) {
         reconstruct_active_formatting_elements();
         auto element = create_element_for_token(tag);
         insert_element(element);
+        if (tag.self_closing) {
+            parse_error("Self-closing non-void element"_s);
+            acknowledge_self_closing_flag();
+        }
         return;
     }
 
@@ -409,10 +454,20 @@ void TreeBuilder::process_in_body(const Token& token) {
             return;
         }
 
+        static const String SVG_NS = "http://www.w3.org/2000/svg"_s;
+        static const String MATHML_NS = "http://www.w3.org/1998/Math/MathML"_s;
+
         for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
             auto* node = it->get();
-            if (node->local_name() == tag.name) {
-                generate_implied_end_tags(tag.name);
+            auto expected_name = tag.name;
+            if (node->namespace_uri() == SVG_NS) {
+                expected_name = svg_camel_case(tag.name.to_lowercase());
+            } else if (node->namespace_uri() == MATHML_NS) {
+                expected_name = tag.name.to_lowercase();
+            }
+
+            if (node->local_name() == expected_name) {
+                generate_implied_end_tags(expected_name);
                 while (current_node() != node) {
                     pop_current_element();
                 }
@@ -490,14 +545,6 @@ void TreeBuilder::process_after_body(const Token& token) {
     parse_error("Unexpected token after body"_s);
     m_insertion_mode = InsertionMode::InBody;
     process_token(token);
-}
-
-void TreeBuilder::process_in_frameset(const Token& token) {
-    process_in_body(token);
-}
-
-void TreeBuilder::process_after_frameset(const Token& token) {
-    process_in_body(token);
 }
 
 void TreeBuilder::process_after_after_body(const Token& token) {

@@ -161,3 +161,44 @@ TEST_F(HTMLTokenizerTest, BooleanAttribute) {
     EXPECT_EQ(tag->attributes[0].first, String("disabled"));
     EXPECT_EQ(tag->attributes[0].second, String(""));
 }
+
+TEST_F(HTMLTokenizerTest, ScriptEscapedEndTagDetected) {
+    auto tokens = tokenize("<script><!-- foo --></script>");
+
+    size_t start_count = 0;
+    size_t end_count = 0;
+    for (const auto& tok : tokens) {
+        if (auto* t = std::get_if<TagToken>(&tok)) {
+            if (t->name == "script"_s) {
+                if (t->is_end_tag) {
+                    ++end_count;
+                } else {
+                    ++start_count;
+                }
+            }
+        }
+    }
+    EXPECT_EQ(start_count, 1u);
+    EXPECT_EQ(end_count, 1u);
+}
+
+TEST_F(HTMLTokenizerTest, ScriptDoubleEscapedDoesNotCloseEarly) {
+    auto tokens = tokenize("<script><!--<script></script>--></script>");
+
+    size_t start_count = 0;
+    size_t end_count = 0;
+    for (const auto& tok : tokens) {
+        if (auto* t = std::get_if<TagToken>(&tok)) {
+            if (t->name == "script"_s) {
+                if (t->is_end_tag) {
+                    ++end_count;
+                } else {
+                    ++start_count;
+                }
+            }
+        }
+    }
+
+    EXPECT_EQ(start_count, 1u);
+    EXPECT_EQ(end_count, 1u);
+}
