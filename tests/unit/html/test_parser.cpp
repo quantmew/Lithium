@@ -798,14 +798,14 @@ TEST_F(HTMLParserTest, ScriptCallbackInjectsDocumentWriteContent) {
     auto* script = body->first_element_child();
     ASSERT_NE(script, nullptr);
     EXPECT_EQ(script->local_name(), String("script"));
-    auto* div = script->next_element_sibling();
-    ASSERT_NE(div, nullptr);
-    EXPECT_EQ(div->local_name(), String("div"));
-    EXPECT_EQ(div->text_content(), String("after"));
-    auto* p = div->next_element_sibling();
+    auto* p = script->next_element_sibling();
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->local_name(), String("p"));
     EXPECT_EQ(p->text_content(), String("written"));
+    auto* div = p->next_element_sibling();
+    ASSERT_NE(div, nullptr);
+    EXPECT_EQ(div->local_name(), String("div"));
+    EXPECT_EQ(div->text_content(), String("after"));
 }
 
 TEST_F(HTMLParserTest, SelfClosingHeadRaisesError) {
@@ -1072,7 +1072,7 @@ TEST_F(HTMLParserTest, MetaCharsetUtf8Accepted) {
 
 TEST_F(HTMLParserTest, UnsupportedMetaCharsetReportsError) {
     Parser parser;
-    auto doc = parser.parse(String("<meta charset=\"windows-1252\"><p>&#233;</p>"));
+    auto doc = parser.parse(String("<meta charset=\"koi8-r\"><p>&#233;</p>"));
 
     auto* body = doc->body();
     ASSERT_NE(body, nullptr);
@@ -1086,7 +1086,7 @@ TEST_F(HTMLParserTest, UnsupportedMetaCharsetReportsError) {
 
 TEST_F(HTMLParserTest, UnsupportedMetaCharsetInBodyReportsErrorAndParses) {
     Parser parser;
-    auto doc = parser.parse(String("<html><head></head><body><meta charset='shift_jis'><p>hi</p></body></html>"));
+    auto doc = parser.parse(String("<html><head></head><body><meta charset='unknown-8bit'><p>hi</p></body></html>"));
     ASSERT_NE(doc, nullptr);
     EXPECT_FALSE(parser.errors().empty());
     auto ps = doc->get_elements_by_tag_name("p"_s);
@@ -1098,7 +1098,7 @@ TEST_F(HTMLParserTest, StreamingUnsupportedCharsetTriggersError) {
     Parser parser;
     parser.begin();
     parser.write("<div>");
-    parser.write("<meta charset='windows-1252'><p>ok</p>");
+    parser.write("<meta charset='x-bogus'><p>ok</p>");
     auto doc = parser.finish();
     ASSERT_NE(doc, nullptr);
     EXPECT_FALSE(parser.errors().empty());
@@ -1219,4 +1219,112 @@ TEST_F(HTMLParserTest, TableCellClosedOnTableEnd) {
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->local_name(), String("p"));
     EXPECT_EQ(p->text_content(), String("after"));
+}
+
+TEST_F(HTMLParserTest, MetaCharsetPastSniffTriggersReparse) {
+    Parser parser;
+    String filler(1100, 'a');
+    String html = "<html><head>"_s + filler + "<meta charset=\"windows-1252\"></head><body><p>t</p></body></html>"_s;
+    auto doc = parser.parse(html);
+    EXPECT_EQ(parser.reparse_count(), 1u);
+    EXPECT_EQ(doc->character_set(), String("windows-1252"));
+}
+
+TEST_F(HTMLParserTest, TransportCharsetBlocksMetaChange) {
+    Parser parser;
+    parser.set_transport_charset("iso-8859-1"_s);
+    auto doc = parser.parse(String("<meta charset='utf-8'><p>x</p>"));
+    EXPECT_EQ(doc->character_set(), String("iso-8859-1"));
+    bool blocked = std::any_of(parser.errors().begin(), parser.errors().end(),
+        [](const String& err) { return err.contains("encoding-change-blocked"_s); });
+    EXPECT_TRUE(blocked);
+    EXPECT_EQ(parser.reparse_count(), 0u);
+}
+
+TEST_F(HTMLParserTest, BomOverridesMetaChange) {
+    Parser parser;
+    auto doc = parser.parse(String("\xEF\xBB\xBF<meta charset='windows-1252'><p>t</p>"));
+    EXPECT_EQ(doc->character_set(), String("utf-8"));
+    bool blocked = std::any_of(parser.errors().begin(), parser.errors().end(),
+        [](const String& err) { return err.contains("encoding-change-blocked"_s); });
+    EXPECT_TRUE(blocked);
+}
+
+TEST_F(HTMLParserTest, SvgCdataPreservesText) {
+    auto doc = parse("<svg><![CDATA[<text>hi</text>]]></svg>");
+    auto svgs = doc->get_elements_by_tag_name("svg"_s);
+    ASSERT_EQ(svgs.size(), 1u);
+    auto* svg = svgs.front();
+    ASSERT_NE(svg, nullptr);
+    ASSERT_NE(svg->first_child(), nullptr);
+    ASSERT_TRUE(svg->first_child()->is_text());
+    EXPECT_EQ(svg->first_child()->text_content(), String("<text>hi</text>"));
+}
+
+TEST_F(HTMLParserTest, SvgScriptAndStyleUseRawtext) {
+    auto doc = parse("<svg><script>if (a < b) {}</script><style>.x{color:red}</style></svg>");
+    auto* svg = doc->body()->first_element_child();
+    ASSERT_NE(svg, nullptr);
+    auto* script = svg->first_element_child();
+    ASSERT_NE(script, nullptr);
+    EXPECT_EQ(script->text_content(), String("if (a < b) {}"));
+    auto* style = script->next_element_sibling();
+    ASSERT_NE(style, nullptr);
+    EXPECT_EQ(style->text_content(), String(".x{color:red}"));
+}
+
+TEST_F(HTMLParserTest, SvgDuplicateNamespacedAttributeReportsError) {
+    Parser parser;
+    auto doc = parser.parse(String("<svg xlink:href='one' xlink:href='two'></svg>"));
+    auto* svg = doc->body()->first_element_child();
+    ASSERT_NE(svg, nullptr);
+    EXPECT_EQ(svg->get_attribute("xlink:href"_s).value_or(String()), String("one"));
+    bool has_duplicate = std::any_of(parser.errors().begin(), parser.errors().end(),
+        [](const String& err) { return err.contains("duplicate"_s); });
+    EXPECT_TRUE(has_duplicate);
+}
+
+TEST_F(HTMLParserTest, FormAttributeResolvesFutureForm) {
+    Parser parser;
+    auto doc = parser.parse(String("<input form='f' id='c'><div></div><form id='f'></form>"));
+    auto* input = doc->get_element_by_id("c"_s);
+    auto* form = doc->get_element_by_id("f"_s);
+    ASSERT_NE(input, nullptr);
+    ASSERT_NE(form, nullptr);
+    EXPECT_EQ(input->form_owner(), form);
+}
+
+TEST_F(HTMLParserTest, FormOwnerUpdatesWhenMoved) {
+    auto doc = parse("<form id='a'><input id='ctrl'></form><form id='b'></form>");
+    auto* ctrl = doc->get_element_by_id("ctrl"_s);
+    auto forms = doc->get_elements_by_tag_name("form"_s);
+    ASSERT_EQ(forms.size(), 2u);
+    ASSERT_NE(ctrl, nullptr);
+    forms[1]->append_child(RefPtr<dom::Node>(ctrl));
+    EXPECT_EQ(ctrl->form_owner(), forms[1]);
+}
+
+TEST_F(HTMLParserTest, ParserModeProtectionReportsBlockedChange) {
+    Parser parser;
+    parser.set_parser_cannot_change_mode(true);
+    auto doc = parser.parse(String("<html><body><p>t</p></body></html>"));
+    auto ps = doc->get_elements_by_tag_name("p"_s);
+    ASSERT_EQ(ps.size(), 1u);
+    bool blocked = std::any_of(parser.errors().begin(), parser.errors().end(),
+        [](const String& err) { return err.contains("parser-cannot-change-mode"_s); });
+    EXPECT_TRUE(blocked);
+}
+
+TEST_F(HTMLParserTest, StreamingMetaCharsetTriggersRestart) {
+    Parser parser;
+    parser.begin();
+    parser.write("<div>"_s + String(1100, 'x'));
+    parser.write("<meta charset='windows-1252'><p>done</p>");
+    auto doc = parser.finish();
+    ASSERT_NE(doc, nullptr);
+    EXPECT_EQ(parser.reparse_count(), 1u);
+    EXPECT_EQ(doc->character_set(), String("windows-1252"));
+    auto ps = doc->get_elements_by_tag_name("p"_s);
+    ASSERT_EQ(ps.size(), 1u);
+    EXPECT_EQ(ps.front()->text_content(), String("done"));
 }

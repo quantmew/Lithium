@@ -78,7 +78,7 @@ void TreeBuilder::process_in_body(const Token& token) {
                 }
                 auto element = create_element_for_token(tag);
                 insert_element(element);
-                m_insertion_mode = InsertionMode::InFrameset;
+                set_insertion_mode_if_allowed(InsertionMode::InFrameset, "parser-cannot-change-mode"_s);
             }
             return;
         }
@@ -132,6 +132,7 @@ void TreeBuilder::process_in_body(const Token& token) {
             if (!stack_contains("template"_s)) {
                 m_form_element = element.get();
             }
+            resolve_pending_form_controls(element.get());
             return;
         }
 
@@ -559,6 +560,9 @@ void TreeBuilder::process_text(const Token& token) {
         parse_error("Unexpected EOF in text"_s);
         pop_current_element();
         m_insertion_mode = m_original_insertion_mode;
+        if (m_insertion_mode == InsertionMode::Text) {
+            return;
+        }
         process_token(token);
         return;
     }
@@ -596,7 +600,7 @@ void TreeBuilder::process_after_body(const Token& token) {
     }
 
     if (is_end_tag_named(token, "html"_s)) {
-        m_insertion_mode = InsertionMode::AfterAfterBody;
+        set_insertion_mode_if_allowed(InsertionMode::AfterAfterBody, "parser-cannot-change-mode"_s);
         return;
     }
 
@@ -605,7 +609,7 @@ void TreeBuilder::process_after_body(const Token& token) {
     }
 
     parse_error("Unexpected token after body"_s);
-    m_insertion_mode = InsertionMode::InBody;
+    set_insertion_mode_if_allowed(InsertionMode::InBody);
     process_token(token);
 }
 

@@ -6,10 +6,45 @@
 #include "tree_builder/constants.hpp"
 #include "lithium/dom/text.hpp"
 #include <algorithm>
+#include <unordered_set>
 
 namespace lithium::html {
 
+bool is_mathml_text_integration_point(const String& name_lower);
+
 TreeBuilder::TreeBuilder() = default;
+
+bool TreeBuilder::in_foreign_content() const {
+    static const String SVG_NS = "http://www.w3.org/2000/svg"_s;
+    static const String MATHML_NS = "http://www.w3.org/1998/Math/MathML"_s;
+
+    auto* adjusted = adjusted_current_node();
+    if (!adjusted) return false;
+
+    auto ns = adjusted->namespace_uri();
+    if (ns.empty()) return false;
+
+    auto local = adjusted->local_name().to_lowercase();
+    if (ns == MATHML_NS) {
+        if (is_mathml_text_integration_point(local)) {
+            return false;
+        }
+        if (local == "annotation-xml"_s) {
+            auto encoding = adjusted->get_attribute("encoding"_s).value_or(String()).to_lowercase();
+            if (encoding == "text/html"_s || encoding == "application/xhtml+xml"_s) {
+                return false;
+            }
+        }
+    }
+
+    if (ns == SVG_NS) {
+        if (local == "foreignobject"_s || local == "desc"_s || local == "title"_s) {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 String svg_camel_case(const String& name_lower) {
     struct Entry { const char* from; const char* to; };
@@ -126,6 +161,14 @@ void TreeBuilder::process_token(const Token& token) {
         m_self_closing_flag_acknowledged = true;
     }
 
+    if (process_foreign_content(token)) {
+        if (check_self_closing && !m_self_closing_flag_acknowledged) {
+            parse_error("Unacknowledged self-closing flag"_s);
+            m_self_closing_flag_acknowledged = true;
+        }
+        return;
+    }
+
     switch (m_insertion_mode) {
         case InsertionMode::Initial:
             process_initial(token);
@@ -202,7 +245,11 @@ void TreeBuilder::process_token(const Token& token) {
     }
 
     if (check_self_closing && !m_self_closing_flag_acknowledged) {
-        parse_error("Unacknowledged self-closing flag"_s);
+        String name;
+        if (auto* tag = std::get_if<TagToken>(&token)) {
+            name = tag->name;
+        }
+        parse_error("non-void-self-closing"_s + (name.empty() ? String() : String(":"_s + name)));
         m_self_closing_flag_acknowledged = true;
     }
 }
@@ -220,9 +267,6 @@ RefPtr<dom::Element> TreeBuilder::create_element(const TagToken& token, const St
         element = m_document->create_element_ns(namespace_uri, token.name);
     } else {
         element = m_document->create_element(token.name);
-    }
-    for (const auto& [name, value] : token.attributes) {
-        element->set_attribute(name, value);
     }
     return element;
 }
@@ -274,35 +318,80 @@ RefPtr<dom::Element> TreeBuilder::create_element_for_token(const TagToken& token
 
     auto element = create_element(adjusted_token, ns);
 
-    // Attribute adjustments per spec
+    // Attribute adjustments per spec with namespace tracking
+    struct AdjustedAttribute {
+        String name;
+        String value;
+        String namespace_uri;
+        String local_name;
+    };
 
-    auto attrs_copy = element->attributes();
-    for (const auto& attr : attrs_copy) {
-        element->remove_attribute(attr.name);
-    }
-    for (auto attr : attrs_copy) {
-        auto name_lower = attr.name.to_lowercase();
+    static const String XLINK_NS = "http://www.w3.org/1999/xlink"_s;
+    static const String XML_NS = "http://www.w3.org/XML/1998/namespace"_s;
+    static const String XMLNS_NS = "http://www.w3.org/2000/xmlns/"_s;
+
+    std::vector<AdjustedAttribute> adjusted_attributes;
+    adjusted_attributes.reserve(token.attributes.size());
+
+    for (const auto& [attr_name, attr_value] : token.attributes) {
+        auto name_lower_attr = attr_name.to_lowercase();
+        AdjustedAttribute adjusted_attr;
+        adjusted_attr.value = attr_value;
+        adjusted_attr.name = attr_name;
+        adjusted_attr.local_name = name_lower_attr;
+
         if (element->namespace_uri() == SVG_NS) {
-            if (name_lower.starts_with("xlink:"_s)) {
-                attr.name = "xlink:"_s + name_lower.substring(6);
-            } else if (name_lower.starts_with("xml:"_s)) {
-                attr.name = "xml:"_s + name_lower.substring(4);
-            } else if (name_lower.starts_with("xmlns:"_s)) {
-                attr.name = "xmlns:"_s + name_lower.substring(6);
-            } else if (name_lower == "xmlns"_s) {
-                attr.name = "xmlns"_s;
+            if (name_lower_attr.starts_with("xlink:"_s)) {
+                adjusted_attr.namespace_uri = XLINK_NS;
+                adjusted_attr.local_name = name_lower_attr.substring(6);
+                adjusted_attr.name = "xlink:"_s + adjusted_attr.local_name;
+            } else if (name_lower_attr.starts_with("xml:"_s)) {
+                adjusted_attr.namespace_uri = XML_NS;
+                adjusted_attr.local_name = name_lower_attr.substring(4);
+                adjusted_attr.name = "xml:"_s + adjusted_attr.local_name;
+            } else if (name_lower_attr.starts_with("xmlns:"_s)) {
+                adjusted_attr.namespace_uri = XMLNS_NS;
+                adjusted_attr.local_name = name_lower_attr.substring(6);
+                adjusted_attr.name = "xmlns:"_s + adjusted_attr.local_name;
+            } else if (name_lower_attr == "xmlns"_s) {
+                adjusted_attr.namespace_uri = XMLNS_NS;
+                adjusted_attr.local_name = "xmlns"_s;
+                adjusted_attr.name = "xmlns"_s;
             } else {
-                attr.name = svg_attribute_camel_case(name_lower);
+                adjusted_attr.name = svg_attribute_camel_case(name_lower_attr);
+                adjusted_attr.local_name = adjusted_attr.name.to_lowercase();
             }
         } else if (element->namespace_uri() == MATHML_NS) {
-            if (name_lower == "definitionurl"_s) {
-                attr.name = "definitionURL"_s;
+            if (name_lower_attr == "definitionurl"_s) {
+                adjusted_attr.name = "definitionURL"_s;
+                adjusted_attr.local_name = "definitionurl"_s;
             } else {
-                attr.name = name_lower;
+                adjusted_attr.name = name_lower_attr;
+                adjusted_attr.local_name = name_lower_attr;
             }
         }
-        element->set_attribute(attr.name, attr.value);
+
+        adjusted_attributes.push_back(std::move(adjusted_attr));
     }
+
+    std::unordered_set<String> seen_attributes;
+    for (const auto& attr : adjusted_attributes) {
+        String key = attr.namespace_uri.empty()
+            ? attr.local_name
+            : attr.namespace_uri + ":"_s + attr.local_name;
+        if (seen_attributes.contains(key)) {
+            parse_error("duplicate-attribute"_s);
+            continue;
+        }
+        seen_attributes.insert(key);
+
+        if (!attr.namespace_uri.empty()) {
+            element->set_attribute_ns(attr.namespace_uri, attr.name, attr.value);
+        } else {
+            element->set_attribute(attr.name, attr.value);
+        }
+    }
+
     associate_form_owner(element.get(), adjusted_token);
     return element;
 }
@@ -789,7 +878,21 @@ void TreeBuilder::parse_error(const String& message) {
     }
 }
 
+bool TreeBuilder::set_insertion_mode_if_allowed(InsertionMode mode, const String& reason) {
+    bool locked = m_parser_cannot_change_mode && !m_context_element;
+    if (locked && mode != m_insertion_mode && mode != InsertionMode::Text) {
+        parse_error(reason.empty() ? "parser-cannot-change-mode"_s : reason);
+        return false;
+    }
+    m_insertion_mode = mode;
+    return true;
+}
+
 void TreeBuilder::reset_insertion_mode_appropriately() {
+    if (m_parser_cannot_change_mode && !m_context_element) {
+        parse_error("parser-cannot-change-mode"_s);
+        return;
+    }
     bool last = false;
     for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
         auto* node = it->get();
@@ -883,24 +986,166 @@ void TreeBuilder::associate_form_owner(dom::Element* element, const TagToken& to
         if (owner && owner->local_name() != "form"_s) {
             owner = nullptr;
         }
-    }
-
-    if (!owner) {
-        if (m_form_element) {
-            owner = m_form_element;
-        } else if (element->local_name() == "option"_s || element->local_name() == "optgroup"_s) {
-            for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
-                if ((*it)->local_name() == "select"_s) {
-                    owner = (*it)->form_owner();
-                    break;
-                }
+        if (!owner) {
+            m_pending_form_associations[*form_attr].push_back(element);
+            element->set_form_owner(nullptr);
+            return;
+        }
+    } else if (m_form_element) {
+        owner = m_form_element;
+    } else if (element->local_name() == "option"_s || element->local_name() == "optgroup"_s) {
+        for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
+            if ((*it)->local_name() == "select"_s) {
+                owner = (*it)->form_owner();
+                break;
             }
         }
     }
 
     if (owner) {
         element->set_form_owner(owner);
+    } else {
+        element->set_form_owner(nullptr);
     }
+}
+
+void TreeBuilder::resolve_pending_form_controls(dom::Element* form) {
+    if (!form) return;
+    auto id_attr = form->get_attribute("id"_s);
+    if (!id_attr.has_value()) return;
+    auto it = m_pending_form_associations.find(*id_attr);
+    if (it == m_pending_form_associations.end()) return;
+    for (auto* control : it->second) {
+        if (control) {
+            control->set_form_owner(form);
+        }
+    }
+    m_pending_form_associations.erase(it);
+}
+
+void TreeBuilder::refresh_form_owner_for_subtree(dom::Node* node) {
+    if (!node) return;
+    if (node->is_element()) {
+        auto* element = node->as_element();
+        if (is_form_associated(element->local_name())) {
+            TagToken pseudo;
+            pseudo.name = element->local_name();
+            for (const auto& attr : element->attributes()) {
+                pseudo.set_attribute(attr.name, attr.value);
+            }
+            associate_form_owner(element, pseudo);
+        }
+    }
+    for (const auto& child : node->child_nodes()) {
+        refresh_form_owner_for_subtree(child.get());
+    }
+}
+
+bool TreeBuilder::process_foreign_content(const Token& token) {
+    if (!in_foreign_content()) {
+        return false;
+    }
+
+    static const std::array<const char*, 48> HTML_BREAKOUT = {
+        "b", "big", "blockquote", "body", "br", "center", "code", "dd", "div", "dl",
+        "dt", "em", "embed", "h1", "h2", "h3", "h4", "h5", "h6", "head", "hr", "i",
+        "html", "img", "li", "listing", "menu", "meta", "nav", "ol", "p", "pre", "ruby",
+        "section", "small", "span", "strong", "summary", "table", "tbody",
+        "td", "template", "tfoot", "th", "thead", "title", "tr", "ul"
+    };
+
+    if (is_start_tag(token)) {
+        auto name_lower = std::get<TagToken>(token).name.to_lowercase();
+        for (const auto* html_tag : HTML_BREAKOUT) {
+            if (name_lower == String(html_tag)) {
+                return false;
+            }
+        }
+    }
+
+    if (auto* character = std::get_if<CharacterToken>(&token)) {
+        auto cp = character->code_point;
+        if (cp == 0) {
+            parse_error("unexpected-null-character"_s);
+            cp = unicode::REPLACEMENT_CHARACTER;
+        }
+        insert_character(cp);
+        return true;
+    }
+
+    if (auto* comment = std::get_if<CommentToken>(&token)) {
+        insert_comment(*comment);
+        return true;
+    }
+
+    if (std::holds_alternative<DoctypeToken>(token)) {
+        parse_error("Unexpected DOCTYPE in foreign content"_s);
+        return true;
+    }
+
+    if (is_start_tag(token)) {
+        auto& tag = std::get<TagToken>(token);
+        auto element = create_element_for_token(tag);
+        insert_element(element);
+
+        auto local = element->local_name().to_lowercase();
+        static const String SVG_NS = "http://www.w3.org/2000/svg"_s;
+        if (element->namespace_uri() == SVG_NS) {
+            if (local == "script"_s && m_tokenizer) {
+                m_tokenizer->set_state(TokenizerState::ScriptData);
+                m_original_insertion_mode = m_insertion_mode;
+                m_insertion_mode = InsertionMode::Text;
+            } else if (local == "style"_s && m_tokenizer) {
+                m_tokenizer->set_state(TokenizerState::RAWTEXT);
+                m_original_insertion_mode = m_insertion_mode;
+                m_insertion_mode = InsertionMode::Text;
+            }
+        }
+
+        if (tag.self_closing) {
+            acknowledge_self_closing_flag();
+            pop_current_element();
+        }
+        return true;
+    }
+
+    if (is_end_tag(token)) {
+        auto& tag = std::get<TagToken>(token);
+        auto target = tag.name;
+        static const String SVG_NS = "http://www.w3.org/2000/svg"_s;
+        static const String MATHML_NS = "http://www.w3.org/1998/Math/MathML"_s;
+
+        auto* adjusted = adjusted_current_node();
+        auto adjusted_ns = adjusted ? adjusted->namespace_uri() : String();
+        if (adjusted_ns == SVG_NS) {
+            target = svg_camel_case(tag.name.to_lowercase());
+        } else if (adjusted_ns == MATHML_NS) {
+            target = tag.name.to_lowercase();
+        }
+
+        for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
+            auto* node = it->get();
+            if (node->namespace_uri().empty()) {
+                break;
+            }
+            if (node->local_name() == target) {
+                while (current_node() && current_node() != node) {
+                    pop_current_element();
+                }
+                if (current_node()) {
+                    pop_current_element();
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (std::holds_alternative<EndOfFileToken>(token)) {
+        return false;
+    }
+
+    return false;
 }
 
 } // namespace lithium::html

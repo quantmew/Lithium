@@ -7,8 +7,82 @@
 #include "lithium/dom/document.hpp"
 #include "lithium/dom/text.hpp"
 #include <algorithm>
+#include <array>
 
 namespace lithium::dom {
+
+namespace {
+
+bool is_form_associated_element(const Element* element) {
+    if (!element) return false;
+    static const std::array<const char*, 12> FORM_ASSOCIATED = {
+        "button", "fieldset", "input", "label", "object", "output",
+        "select", "textarea", "option", "optgroup", "meter", "progress"
+    };
+    auto local = element->local_name();
+    for (const auto* name : FORM_ASSOCIATED) {
+        if (local == String(name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Element* resolve_form_owner(Element* element) {
+    if (!element || !is_form_associated_element(element)) {
+        return nullptr;
+    }
+
+    if (element->local_name() == "option"_s || element->local_name() == "optgroup"_s) {
+        Node* ancestor = element->parent_node();
+        while (ancestor) {
+            if (ancestor->is_element()) {
+                auto* ancestor_el = ancestor->as_element();
+                if (ancestor_el->local_name() == "select"_s) {
+                    if (ancestor_el->form_owner()) {
+                        return ancestor_el->form_owner();
+                    }
+                    break;
+                }
+            }
+            ancestor = ancestor->parent_node();
+        }
+    }
+
+    if (auto attr = element->get_attribute("form"_s)) {
+        auto* doc = element->owner_document();
+        auto* target = doc ? doc->get_element_by_id(*attr) : nullptr;
+        if (target && target->local_name() == "form"_s) {
+            return target;
+        }
+        return nullptr;
+    }
+
+    Node* ancestor = element->parent_node();
+    while (ancestor) {
+        if (ancestor->is_element() && ancestor->as_element()->local_name() == "form"_s) {
+            return ancestor->as_element();
+        }
+        ancestor = ancestor->parent_node();
+    }
+
+    return nullptr;
+}
+
+void refresh_form_owners(Node* node) {
+    if (!node) return;
+    if (node->is_element()) {
+        auto* element = node->as_element();
+        if (is_form_associated_element(element)) {
+            element->set_form_owner(resolve_form_owner(element));
+        }
+    }
+    for (const auto& child : node->child_nodes()) {
+        refresh_form_owners(child.get());
+    }
+}
+
+} // namespace
 
 RefPtr<Node> Node::append_child(RefPtr<Node> child) {
     if (!child) return nullptr;
@@ -31,6 +105,8 @@ RefPtr<Node> Node::append_child(RefPtr<Node> child) {
 
     m_last_child = child.get();
     m_children.push_back(child);
+
+    refresh_form_owners(child.get());
 
     return child;
 }
@@ -72,6 +148,8 @@ RefPtr<Node> Node::insert_before(RefPtr<Node> node, Node* reference) {
 
     m_children.insert(it, node);
 
+    refresh_form_owners(node.get());
+
     return node;
 }
 
@@ -102,6 +180,8 @@ RefPtr<Node> Node::remove_child(RefPtr<Node> child) {
     if (it != m_children.end()) {
         m_children.erase(it);
     }
+
+    refresh_form_owners(child.get());
 
     return child;
 }

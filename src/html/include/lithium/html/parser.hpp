@@ -38,6 +38,7 @@ public:
     // Mode flags
     void set_parser_cannot_change_mode(bool value) { m_parser_cannot_change_mode = value; }
     void set_iframe_srcdoc(bool value) { m_is_iframe_srcdoc = value; }
+    void set_transport_charset(const String& value) { m_transport_charset = value.to_lowercase(); }
 
     // Error handling
     using ErrorCallback = std::function<void(const String& message, usize line, usize column)>;
@@ -45,9 +46,12 @@ public:
 
     // Get parse errors
     [[nodiscard]] const std::vector<String>& errors() const { return m_errors; }
+    [[nodiscard]] usize reparse_count() const { return m_reparse_count; }
 
 private:
     void on_parse_error(const String& message);
+    void process_streaming_tokens(bool mark_end_of_stream);
+    void reinitialize_streaming_with_charset(const String& charset);
 
     bool m_scripting_enabled{false};
     bool m_parser_cannot_change_mode{false};
@@ -61,12 +65,18 @@ private:
     std::unique_ptr<TreeBuilder> m_streaming_builder;
     bool m_streaming_open{false};
     bool m_seen_first_chunk{false};
-    bool m_streaming_detected_charset{false};
-    bool m_streaming_unsupported{false};
     bool m_in_script_callback{false};
     bool m_collecting_script{false};
     StringBuilder m_script_buffer;
     ScriptCallback m_script_callback;
+    String m_transport_charset;
+    usize m_reparse_count{0};
+    String m_current_charset{"utf-8"};
+    String m_streaming_charset{"utf-8"};
+    String m_streaming_raw_html;
+    bool m_streaming_reparsed{false};
+    bool m_streaming_from_bom{false};
+    bool m_streaming_from_transport{false};
 };
 
 // ============================================================================

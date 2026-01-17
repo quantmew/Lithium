@@ -3,6 +3,7 @@
 #include "tokenizer.hpp"
 #include "lithium/dom/document.hpp"
 #include <stack>
+#include <unordered_map>
 #include <vector>
 
 namespace lithium::html {
@@ -85,6 +86,7 @@ public:
     // Fragment parsing context
     void set_context_element(dom::Element* context) { m_context_element = context; }
     void prepare_for_fragment(RefPtr<dom::Element> context_element);
+    [[nodiscard]] bool in_foreign_content() const;
 
     // Get tokenizer (for state adjustment)
     [[nodiscard]] Tokenizer* tokenizer() const { return m_tokenizer; }
@@ -139,8 +141,8 @@ private:
     [[nodiscard]] bool stack_contains_in_table_scope(const String& tag_name) const;
     [[nodiscard]] bool stack_contains_in_select_scope(const String& tag_name) const;
 
-// Active formatting elements
-void push_active_formatting_element(RefPtr<dom::Element> element, const Token& token);
+    // Active formatting elements
+    void push_active_formatting_element(RefPtr<dom::Element> element, const Token& token);
     void push_marker();
     void reconstruct_active_formatting_elements();
     void clear_active_formatting_to_last_marker();
@@ -174,6 +176,10 @@ void push_active_formatting_element(RefPtr<dom::Element> element, const Token& t
 
     void acknowledge_self_closing_flag() { m_self_closing_flag_acknowledged = true; }
     void associate_form_owner(dom::Element* element, const TagToken& token);
+    void resolve_pending_form_controls(dom::Element* form);
+    void refresh_form_owner_for_subtree(dom::Node* node);
+    bool process_foreign_content(const Token& token);
+    bool set_insertion_mode_if_allowed(InsertionMode mode, const String& reason = String());
 
     // Document
     RefPtr<dom::Document> m_document;
@@ -207,6 +213,9 @@ void push_active_formatting_element(RefPtr<dom::Element> element, const Token& t
 
     // Tokenizer (for state adjustment)
     Tokenizer* m_tokenizer{nullptr};
+
+    // Pending form="" lookups
+    std::unordered_map<String, std::vector<dom::Element*>> m_pending_form_associations;
 
     // Error callback
     ErrorCallback m_error_callback;

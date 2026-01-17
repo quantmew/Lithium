@@ -37,10 +37,14 @@ void Tokenizer::handle_markup_declaration_open_state() {
     } else if (consume_if_match("DOCTYPE", true)) {
         m_state = TokenizerState::DOCTYPE;
     } else if (consume_if_match("[CDATA[", false)) {
-        parse_error("cdata-in-html-content"_s);
-        m_current_token = CommentToken{};
-        std::get<CommentToken>(*m_current_token).data = "[CDATA["_s;
-        m_state = TokenizerState::BogusComment;
+        if (m_in_foreign_content) {
+            m_state = TokenizerState::CDATASection;
+        } else {
+            parse_error("cdata-in-html-content"_s);
+            m_current_token = CommentToken{};
+            std::get<CommentToken>(*m_current_token).data = "[CDATA["_s;
+            m_state = TokenizerState::BogusComment;
+        }
     } else {
         parse_error("incorrectly-opened-comment"_s);
         m_current_token = CommentToken{};

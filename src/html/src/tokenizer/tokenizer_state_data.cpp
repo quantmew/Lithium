@@ -699,15 +699,71 @@ void Tokenizer::handle_script_data_double_escape_end_state() {
 }
 
 void Tokenizer::handle_cdata_section_state() {
-    emit_character(consume());
+    auto cp = peek();
+    if (!cp) {
+        emit_eof();
+        return;
+    }
+    consume();
+    if (*cp == ']') {
+        m_state = TokenizerState::CDATASectionBracket;
+        return;
+    }
+    if (*cp == 0) {
+        parse_error("unexpected-null-character"_s);
+        emit_character(unicode::REPLACEMENT_CHARACTER);
+        return;
+    }
+    emit_character(*cp);
 }
 
 void Tokenizer::handle_cdata_section_bracket_state() {
+    auto cp = peek();
+    if (!cp) {
+        emit_character(']');
+        emit_eof();
+        return;
+    }
+    consume();
+    if (*cp == ']') {
+        m_state = TokenizerState::CDATASectionEnd;
+        return;
+    }
     emit_character(']');
+    if (*cp == 0) {
+        parse_error("unexpected-null-character"_s);
+        emit_character(unicode::REPLACEMENT_CHARACTER);
+    } else {
+        emit_character(*cp);
+    }
+    m_state = TokenizerState::CDATASection;
 }
 
 void Tokenizer::handle_cdata_section_end_state() {
-    emit_character(']');
+    auto cp = peek();
+    if (!cp) {
+        emit_character(']');
+        emit_character(']');
+        emit_eof();
+        return;
+    }
+    consume();
+    if (*cp == '>') {
+        m_state = TokenizerState::Data;
+        return;
+    }
+    if (*cp != ']') {
+        emit_character(']');
+        emit_character(']');
+        if (*cp == 0) {
+            parse_error("unexpected-null-character"_s);
+            emit_character(unicode::REPLACEMENT_CHARACTER);
+        } else {
+            emit_character(*cp);
+        }
+        m_state = TokenizerState::CDATASection;
+        return;
+    }
     emit_character(']');
 }
 

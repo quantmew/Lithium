@@ -783,7 +783,7 @@ void TreeBuilder::process_after_frameset(const Token& token) {
     }
 
     if (is_end_tag_named(token, "html"_s)) {
-        m_insertion_mode = InsertionMode::AfterAfterFrameset;
+        set_insertion_mode_if_allowed(InsertionMode::AfterAfterFrameset, "parser-cannot-change-mode"_s);
         return;
     }
 

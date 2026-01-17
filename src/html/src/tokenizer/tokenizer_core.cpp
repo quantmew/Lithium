@@ -31,8 +31,29 @@ void Tokenizer::append_input(const String& more) {
     }
 }
 
+void Tokenizer::insert_input_at_current_position(const String& more) {
+    if (more.empty()) return;
+    String before = m_input.substring(0, m_position);
+    String after;
+    if (m_position < m_input.length()) {
+        after = m_input.substring(m_position);
+    }
+    m_input = before + more + after;
+    m_eof_emitted = false;
+}
+
 void Tokenizer::mark_end_of_stream() {
     m_end_of_stream = true;
+}
+
+void Tokenizer::clear_token_queue() {
+    m_token_queue.clear();
+    m_current_token.reset();
+}
+
+void Tokenizer::reset_after_script_execution() {
+    clear_token_queue();
+    m_state = TokenizerState::Data;
 }
 
 void Tokenizer::run() {

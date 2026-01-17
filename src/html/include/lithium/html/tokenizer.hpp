@@ -164,11 +164,15 @@ public:
     // Set callbacks
     void set_token_callback(TokenCallback callback) { m_token_callback = std::move(callback); }
     void set_error_callback(ErrorCallback callback) { m_error_callback = std::move(callback); }
+    void set_in_foreign_content(bool in_foreign) { m_in_foreign_content = in_foreign; }
 
     // Streaming support
     void enable_streaming(bool streaming) { m_streaming = streaming; }
     void append_input(const String& more);
+    void insert_input_at_current_position(const String& more);
     void mark_end_of_stream();
+    void clear_token_queue();
+    void reset_after_script_execution();
     [[nodiscard]] bool streaming() const { return m_streaming; }
 
     // Run tokenizer
@@ -330,6 +334,7 @@ private:
     bool m_streaming{false};
     bool m_end_of_stream{true};
     bool m_eof_emitted{false};
+    bool m_in_foreign_content{false};
 };
 
 } // namespace lithium::html
