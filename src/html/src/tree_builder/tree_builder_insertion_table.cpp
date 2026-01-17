@@ -268,17 +268,51 @@ void TreeBuilder::process_in_table_body(const Token& token) {
             process_token(token);
             return;
         }
+        if (tag.name == "tbody"_s || tag.name == "tfoot"_s || tag.name == "thead"_s) {
+            if (!stack_contains_in_table_scope("tbody"_s) &&
+                !stack_contains_in_table_scope("thead"_s) &&
+                !stack_contains_in_table_scope("tfoot"_s)) {
+                parse_error("No table section to close"_s);
+                return;
+            }
+            while (current_node() && current_node()->local_name() != "tbody"_s &&
+                   current_node()->local_name() != "thead"_s &&
+                   current_node()->local_name() != "tfoot"_s) {
+                pop_current_element();
+            }
+            if (current_node()) pop_current_element();
+            m_insertion_mode = InsertionMode::InTable;
+            process_token(token);
+            return;
+        }
     }
     if (is_end_tag(token)) {
         auto& tag = std::get<TagToken>(token);
         if (tag.name == "tbody"_s || tag.name == "tfoot"_s ||
             tag.name == "thead"_s) {
-            pop_current_element();
+            if (!stack_contains_in_table_scope(tag.name)) {
+                parse_error("No table section to close"_s);
+                return;
+            }
+            while (current_node() && current_node()->local_name() != tag.name) {
+                pop_current_element();
+            }
+            if (current_node()) {
+                pop_current_element();
+            }
             m_insertion_mode = InsertionMode::InTable;
             return;
         }
         if (tag.name == "table"_s) {
-            pop_current_element();
+            if (!stack_contains_in_table_scope("tbody"_s) &&
+                !stack_contains_in_table_scope("thead"_s) &&
+                !stack_contains_in_table_scope("tfoot"_s)) {
+                parse_error("No table section to close"_s);
+                return;
+            }
+            while (current_node() && current_node()->local_name() != "table"_s) {
+                pop_current_element();
+            }
             m_insertion_mode = InsertionMode::InTable;
             process_token(token);
             return;
@@ -297,22 +331,101 @@ void TreeBuilder::process_in_row(const Token& token) {
             push_marker();
             return;
         }
+        if (tag.name == "caption"_s || tag.name == "col"_s || tag.name == "colgroup"_s ||
+            tag.name == "tbody"_s || tag.name == "tfoot"_s || tag.name == "thead"_s ||
+            tag.name == "tr"_s || tag.name == "table"_s) {
+            if (!stack_contains_in_table_scope("tr"_s)) {
+                parse_error("No tr to close"_s);
+                return;
+            }
+            pop_current_element();
+            m_insertion_mode = InsertionMode::InTableBody;
+            process_token(token);
+            return;
+        }
     }
     if (is_end_tag_named(token, "tr"_s)) {
+        if (!stack_contains_in_table_scope("tr"_s)) {
+            parse_error("No tr to close"_s);
+            return;
+        }
+        generate_implied_end_tags();
         pop_current_element();
         m_insertion_mode = InsertionMode::InTableBody;
+        clear_active_formatting_to_last_marker();
         return;
+    }
+    if (is_end_tag(token)) {
+        auto& tag = std::get<TagToken>(token);
+        if (tag.name == "table"_s || tag.name == "tbody"_s ||
+            tag.name == "tfoot"_s || tag.name == "thead"_s) {
+            if (!stack_contains_in_table_scope("tr"_s)) {
+                parse_error("No tr to close"_s);
+                return;
+            }
+            pop_current_element();
+            m_insertion_mode = InsertionMode::InTableBody;
+            process_token(token);
+            return;
+        }
     }
     process_in_table(token);
 }
 
 void TreeBuilder::process_in_cell(const Token& token) {
+    if (is_start_tag(token)) {
+        auto& tag = std::get<TagToken>(token);
+        if (tag.name == "caption"_s || tag.name == "col"_s || tag.name == "colgroup"_s ||
+            tag.name == "tbody"_s || tag.name == "tfoot"_s || tag.name == "thead"_s ||
+            tag.name == "td"_s || tag.name == "th"_s || tag.name == "tr"_s || tag.name == "table"_s) {
+            if (!stack_contains_in_table_scope("td"_s) &&
+                !stack_contains_in_table_scope("th"_s)) {
+                parse_error("No cell to close"_s);
+                return;
+            }
+            while (current_node() && current_node()->local_name() != "td"_s &&
+                   current_node()->local_name() != "th"_s) {
+                pop_current_element();
+            }
+            if (current_node()) pop_current_element();
+            clear_active_formatting_to_last_marker();
+            m_insertion_mode = InsertionMode::InRow;
+            process_token(token);
+            return;
+        }
+    }
     if (is_end_tag(token)) {
         auto& tag = std::get<TagToken>(token);
         if (tag.name == "td"_s || tag.name == "th"_s) {
-            pop_current_element();
+            if (!stack_contains_in_table_scope(tag.name)) {
+                parse_error("No cell to close"_s);
+                return;
+            }
+            generate_implied_end_tags();
+            while (current_node() && current_node()->local_name() != tag.name) {
+                pop_current_element();
+            }
+            if (current_node()) pop_current_element();
             clear_active_formatting_to_last_marker();
             m_insertion_mode = InsertionMode::InRow;
+            return;
+        }
+        if (tag.name == "table"_s || tag.name == "tbody"_s ||
+            tag.name == "tfoot"_s || tag.name == "thead"_s ||
+            tag.name == "tr"_s) {
+            if (!stack_contains_in_table_scope("td"_s) &&
+                !stack_contains_in_table_scope("th"_s)) {
+                parse_error("No cell to close"_s);
+                return;
+            }
+            while (current_node() && current_node()->local_name() != "td"_s &&
+                   current_node()->local_name() != "th"_s) {
+                pop_current_element();
+            }
+            if (current_node()) pop_current_element();
+            clear_active_formatting_to_last_marker();
+            m_insertion_mode = InsertionMode::InRow;
+            process_token(token);
             return;
         }
     }

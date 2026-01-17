@@ -37,6 +37,54 @@ String svg_camel_case(const String& name_lower) {
     return name_lower;
 }
 
+String svg_attribute_camel_case(const String& name_lower) {
+    struct Entry { const char* from; const char* to; };
+    static const Entry mappings[] = {
+        {"attributename", "attributeName"}, {"attributetype", "attributeType"},
+        {"basefrequency", "baseFrequency"}, {"clippathunits", "clipPathUnits"},
+        {"diffuseconstant", "diffuseConstant"}, {"edgemode", "edgeMode"},
+        {"filterunits", "filterUnits"}, {"glyphref", "glyphRef"},
+        {"gradienttransform", "gradientTransform"}, {"gradientunits", "gradientUnits"},
+        {"kernelmatrix", "kernelMatrix"}, {"kernelunitlength", "kernelUnitLength"},
+        {"keypoints", "keyPoints"}, {"keysplines", "keySplines"}, {"keytimes", "keyTimes"},
+        {"lengthadjust", "lengthAdjust"}, {"limitingconeangle", "limitingConeAngle"},
+        {"markerheight", "markerHeight"}, {"markerunits", "markerUnits"}, {"markerwidth", "markerWidth"},
+        {"maskcontentunits", "maskContentUnits"}, {"maskunits", "maskUnits"},
+        {"numoctaves", "numOctaves"}, {"pathlength", "pathLength"},
+        {"patterncontentunits", "patternContentUnits"}, {"patterntransform", "patternTransform"},
+        {"patternunits", "patternUnits"}, {"pointsatx", "pointsAtX"},
+        {"pointsaty", "pointsAtY"}, {"pointsatz", "pointsAtZ"},
+        {"preservealpha", "preserveAlpha"}, {"preserveaspectratio", "preserveAspectRatio"},
+        {"primitiveunits", "primitiveUnits"}, {"refx", "refX"}, {"refy", "refY"},
+        {"repeatcount", "repeatCount"}, {"repeatdur", "repeatDur"},
+        {"requiredextensions", "requiredExtensions"}, {"requiredfeatures", "requiredFeatures"},
+        {"specularconstant", "specularConstant"}, {"specularexponent", "specularExponent"},
+        {"spreadmethod", "spreadMethod"}, {"startoffset", "startOffset"},
+        {"stddeviation", "stdDeviation"}, {"stitchtiles", "stitchTiles"},
+        {"surfacescale", "surfaceScale"}, {"systemlanguage", "systemLanguage"},
+        {"tablevalues", "tableValues"}, {"targetx", "targetX"}, {"targety", "targetY"},
+        {"textlength", "textLength"}, {"viewbox", "viewBox"}, {"viewtarget", "viewTarget"},
+        {"xchannelselector", "xChannelSelector"}, {"ychannelselector", "yChannelSelector"},
+        {"zoomandpan", "zoomAndPan"}
+    };
+    for (const auto& m : mappings) {
+        if (name_lower == String(m.from)) {
+            return String(m.to);
+        }
+    }
+    return name_lower;
+}
+
+bool is_mathml_text_integration_point(const String& name_lower) {
+    static const std::array<const char*, 5> POINTS = {"mi", "mo", "mn", "ms", "mtext"};
+    for (const auto* n : POINTS) {
+        if (name_lower == String(n)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void TreeBuilder::set_document(RefPtr<dom::Document> document) {
     m_document = document;
 }
@@ -207,7 +255,14 @@ RefPtr<dom::Element> TreeBuilder::create_element_for_token(const TagToken& token
         }
     } else if (context_ns == MATHML_NS) {
         if (context_name_lower == "annotation-xml"_s) {
-            // Simplified: treat as HTML integration point
+            auto encoding = adjusted ? adjusted->get_attribute("encoding"_s).value_or(String()).to_lowercase() : String();
+            if (encoding == "text/html"_s || encoding == "application/xhtml+xml"_s) {
+                ns = String();
+            } else {
+                ns = MATHML_NS;
+            }
+        } else if (is_mathml_text_integration_point(context_name_lower) &&
+                   name_lower != "mglyph"_s && name_lower != "malignmark"_s) {
             ns = String();
         } else {
             ns = MATHML_NS;
@@ -217,7 +272,39 @@ RefPtr<dom::Element> TreeBuilder::create_element_for_token(const TagToken& token
     TagToken adjusted_token = token;
     adjusted_token.name = adjusted_name;
 
-    return create_element(adjusted_token, ns);
+    auto element = create_element(adjusted_token, ns);
+
+    // Attribute adjustments per spec
+
+    auto attrs_copy = element->attributes();
+    for (const auto& attr : attrs_copy) {
+        element->remove_attribute(attr.name);
+    }
+    for (auto attr : attrs_copy) {
+        auto name_lower = attr.name.to_lowercase();
+        if (element->namespace_uri() == SVG_NS) {
+            if (name_lower.starts_with("xlink:"_s)) {
+                attr.name = "xlink:"_s + name_lower.substring(6);
+            } else if (name_lower.starts_with("xml:"_s)) {
+                attr.name = "xml:"_s + name_lower.substring(4);
+            } else if (name_lower.starts_with("xmlns:"_s)) {
+                attr.name = "xmlns:"_s + name_lower.substring(6);
+            } else if (name_lower == "xmlns"_s) {
+                attr.name = "xmlns"_s;
+            } else {
+                attr.name = svg_attribute_camel_case(name_lower);
+            }
+        } else if (element->namespace_uri() == MATHML_NS) {
+            if (name_lower == "definitionurl"_s) {
+                attr.name = "definitionURL"_s;
+            } else {
+                attr.name = name_lower;
+            }
+        }
+        element->set_attribute(attr.name, attr.value);
+    }
+    associate_form_owner(element.get(), adjusted_token);
+    return element;
 }
 
 void TreeBuilder::insert_element(RefPtr<dom::Element> element) {
@@ -305,8 +392,10 @@ bool TreeBuilder::stack_contains(const String& tag_name) const {
 }
 
 bool TreeBuilder::stack_contains_in_scope(const String& tag_name) const {
-    static const std::array<const char*, 10> scope_markers = {
-        "applet", "caption", "html", "table", "td", "th", "marquee", "object", "template", "foreignObject"
+    static const std::array<const char*, 18> scope_markers = {
+        "applet", "caption", "html", "table", "td", "th", "marquee", "object", "template",
+        "foreignObject", "desc", "title",
+        "mi", "mo", "mn", "ms", "mtext", "annotation-xml"
     };
 
     for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
@@ -372,6 +461,23 @@ bool TreeBuilder::stack_contains_in_select_scope(const String& tag_name) const {
 }
 
 void TreeBuilder::push_active_formatting_element(RefPtr<dom::Element> element, const Token& token) {
+    // Limit to three entries with same tag name as per spec.
+    usize count = 0;
+    std::optional<usize> first_match;
+    for (usize i = 0; i < m_active_formatting_elements.size(); ++i) {
+        auto& afe = m_active_formatting_elements[i];
+        if (afe.type == ActiveFormattingElement::Type::Element &&
+            afe.element && afe.element->local_name() == element->local_name()) {
+            if (!first_match.has_value()) {
+                first_match = i;
+            }
+            ++count;
+        }
+    }
+    if (count >= 3 && first_match.has_value()) {
+        m_active_formatting_elements.erase(m_active_formatting_elements.begin() + static_cast<isize>(*first_match));
+    }
+
     m_active_formatting_elements.push_back({
         ActiveFormattingElement::Type::Element,
         element,
@@ -446,24 +552,24 @@ void TreeBuilder::adoption_agency_algorithm(const String& tag_name) {
             });
 
         if (afe_it == m_active_formatting_elements.rend()) {
-            // Nothing to do
             return;
         }
 
         auto* formatting_element = afe_it->element.get();
+        auto active_it = std::next(afe_it).base();
 
         // 2. If formatting element not on stack, remove from active list
         auto stack_it = std::find_if(m_open_elements.begin(), m_open_elements.end(),
             [&](const RefPtr<dom::Element>& el) { return el.get() == formatting_element; });
         if (stack_it == m_open_elements.end()) {
             parse_error("adoption-agency-formatting-not-on-stack"_s);
-            m_active_formatting_elements.erase(std::next(afe_it).base());
+            m_active_formatting_elements.erase(active_it);
             return;
         }
 
         if (!stack_contains_in_scope(tag_name)) {
             parse_error("adoption-agency-no-scope"_s);
-            m_active_formatting_elements.erase(std::next(afe_it).base());
+            m_active_formatting_elements.erase(active_it);
             return;
         }
 
@@ -487,7 +593,7 @@ void TreeBuilder::adoption_agency_algorithm(const String& tag_name) {
         if (!furthest_block) {
             // Pop formatting element and remove from active formatting
             m_open_elements.erase(stack_it);
-            m_active_formatting_elements.erase(std::next(afe_it).base());
+            m_active_formatting_elements.erase(active_it);
             return;
         }
 
@@ -495,8 +601,10 @@ void TreeBuilder::adoption_agency_algorithm(const String& tag_name) {
             ? m_open_elements[formatting_index - 1].get()
             : nullptr;
 
-        auto* last_node = furthest_block;
+        dom::Element* furthest_block_node = furthest_block;
+        dom::Element* last_node = furthest_block;
 
+        // 4. Walk back from furthest block to formatting element
         for (int i = furthest_index - 1; i >= formatting_index; --i) {
             auto* current = m_open_elements[i].get();
 
@@ -508,62 +616,97 @@ void TreeBuilder::adoption_agency_algorithm(const String& tag_name) {
                 });
 
             if (afe_match == m_active_formatting_elements.end()) {
+                m_open_elements.erase(m_open_elements.begin() + i);
                 continue;
             }
 
-            // Remove last_node from its current parent before reparenting
+            if (current == formatting_element) {
+                break;
+            }
+
+            auto clone = create_element_for_token(std::get<TagToken>(afe_match->token));
+            afe_match->element = clone;
+            m_open_elements[i] = clone;
+
             if (last_node->parent_node()) {
                 last_node->parent_node()->remove_child(RefPtr<dom::Node>(last_node));
             }
-
-        auto clone = create_element_for_token(std::get<TagToken>(afe_match->token));
-        afe_match->element = clone;
-        m_open_elements[i] = clone;
-
-        clone->append_child(RefPtr<dom::Node>(last_node));
-        last_node = clone.get();
+            clone->append_child(RefPtr<dom::Node>(last_node));
+            last_node = clone.get();
         }
 
+        // 5. Reparent last_node to common ancestor
         if (common_ancestor) {
             if (last_node->parent_node()) {
                 last_node->parent_node()->remove_child(RefPtr<dom::Node>(last_node));
             }
-            common_ancestor->append_child(RefPtr<dom::Node>(last_node));
+            if (common_ancestor->local_name() == "table"_s) {
+                if (auto* parent = common_ancestor->parent_node()) {
+                    parent->insert_before(RefPtr<dom::Node>(last_node), common_ancestor);
+                }
+            } else {
+                common_ancestor->append_child(RefPtr<dom::Node>(last_node));
+            }
         }
 
-        auto new_formatting_element = create_element_for_token(std::get<TagToken>((std::next(afe_it).base())->token));
-        // Move children of last_node into new_formatting_element
-        while (last_node->first_child()) {
-            auto child = RefPtr<dom::Node>(last_node->first_child());
-            last_node->remove_child(child);
+        // 6. Create new formatting element and move children
+        auto formatting_token = std::get<TagToken>(active_it->token);
+        auto new_formatting_element = create_element_for_token(formatting_token);
+        while (furthest_block_node->first_child()) {
+            auto child = RefPtr<dom::Node>(furthest_block_node->first_child());
+            furthest_block_node->remove_child(child);
             new_formatting_element->append_child(child);
         }
+        furthest_block_node->append_child(new_formatting_element);
 
+        // 7. Update stacks
         m_open_elements.erase(stack_it);
         m_open_elements.insert(m_open_elements.begin() + formatting_index, new_formatting_element);
 
-        // Replace in active formatting elements
-        m_active_formatting_elements.erase(std::next(afe_it).base());
-        m_active_formatting_elements.push_back({ActiveFormattingElement::Type::Element, new_formatting_element, std::get<TagToken>((std::next(afe_it).base())->token)});
+        m_active_formatting_elements.erase(active_it);
+        m_active_formatting_elements.push_back({ActiveFormattingElement::Type::Element, new_formatting_element, formatting_token});
 
         return;
     }
 }
 
 TreeBuilder::InsertionLocation TreeBuilder::appropriate_insertion_place() {
-    if (m_foster_parenting) {
-        for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
-            if ((*it)->local_name() == "table"_s) {
-                auto* table = it->get();
-                if (auto* parent = table->parent_node()) {
-                    return {parent, table};
-                }
-                auto next = it + 1;
-                if (next != m_open_elements.rend()) {
-                    return {next->get(), nullptr};
-                }
-            }
+    if (!m_foster_parenting) {
+        return {adjusted_current_node(), nullptr};
+    }
+
+    int last_template_index = -1;
+    int last_table_index = -1;
+    for (int i = static_cast<int>(m_open_elements.size()) - 1; i >= 0; --i) {
+        auto name = m_open_elements[static_cast<usize>(i)]->local_name();
+        if (last_template_index == -1 && name == "template"_s) {
+            last_template_index = i;
         }
+        if (last_table_index == -1 && name == "table"_s) {
+            last_table_index = i;
+        }
+        if (last_template_index != -1 && last_table_index != -1) {
+            break;
+        }
+    }
+
+    bool use_table = last_table_index != -1 &&
+        (last_template_index == -1 || last_table_index > last_template_index);
+
+    if (use_table) {
+        auto* table = m_open_elements[static_cast<usize>(last_table_index)].get();
+        if (auto* parent = table->parent_node()) {
+            return {parent, table};
+        }
+        if (last_table_index > 0) {
+            return {m_open_elements[static_cast<usize>(last_table_index - 1)].get(), nullptr};
+        }
+        return {table, nullptr};
+    }
+
+    if (last_template_index != -1) {
+        auto* template_element = m_open_elements[static_cast<usize>(last_template_index)].get();
+        return {template_element, nullptr};
     }
 
     return {adjusted_current_node(), nullptr};
@@ -621,6 +764,19 @@ bool TreeBuilder::is_special_element(const String& tag_name) {
 bool TreeBuilder::is_formatting_element(const String& tag_name) {
     for (const char* fmt : detail::FORMATTING_ELEMENTS) {
         if (tag_name == String(fmt)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TreeBuilder::is_form_associated(const String& tag_name) {
+    static const std::array<const char*, 12> FORM_ASSOCIATED = {
+        "button", "fieldset", "input", "label", "object", "output",
+        "select", "textarea", "option", "optgroup", "meter", "progress"
+    };
+    for (const char* name : FORM_ASSOCIATED) {
+        if (tag_name == String(name)) {
             return true;
         }
     }
@@ -709,6 +865,41 @@ void TreeBuilder::reset_insertion_mode_appropriately() {
             m_insertion_mode = InsertionMode::InBody;
             return;
         }
+    }
+}
+
+void TreeBuilder::associate_form_owner(dom::Element* element, const TagToken& token) {
+    if (!element || !is_form_associated(element->local_name())) {
+        return;
+    }
+
+    if (stack_contains("template"_s)) {
+        return;
+    }
+
+    dom::Element* owner = nullptr;
+    if (auto form_attr = token.get_attribute("form"_s)) {
+        owner = m_document ? m_document->get_element_by_id(*form_attr) : nullptr;
+        if (owner && owner->local_name() != "form"_s) {
+            owner = nullptr;
+        }
+    }
+
+    if (!owner) {
+        if (m_form_element) {
+            owner = m_form_element;
+        } else if (element->local_name() == "option"_s || element->local_name() == "optgroup"_s) {
+            for (auto it = m_open_elements.rbegin(); it != m_open_elements.rend(); ++it) {
+                if ((*it)->local_name() == "select"_s) {
+                    owner = (*it)->form_owner();
+                    break;
+                }
+            }
+        }
+    }
+
+    if (owner) {
+        element->set_form_owner(owner);
     }
 }
 

@@ -32,6 +32,8 @@ public:
     // Scripting support
     void set_scripting_enabled(bool enabled) { m_scripting_enabled = enabled; }
     [[nodiscard]] bool scripting_enabled() const { return m_scripting_enabled; }
+    using ScriptCallback = std::function<void(const String& script_text)>;
+    void set_script_callback(ScriptCallback callback) { m_script_callback = std::move(callback); }
 
     // Mode flags
     void set_parser_cannot_change_mode(bool value) { m_parser_cannot_change_mode = value; }
@@ -59,6 +61,12 @@ private:
     std::unique_ptr<TreeBuilder> m_streaming_builder;
     bool m_streaming_open{false};
     bool m_seen_first_chunk{false};
+    bool m_streaming_detected_charset{false};
+    bool m_streaming_unsupported{false};
+    bool m_in_script_callback{false};
+    bool m_collecting_script{false};
+    StringBuilder m_script_buffer;
+    ScriptCallback m_script_callback;
 };
 
 // ============================================================================

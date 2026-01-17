@@ -429,7 +429,11 @@ void Tokenizer::finish_attribute_name() {
 void Tokenizer::finish_attribute_value() {
     if (m_current_token && std::holds_alternative<TagToken>(*m_current_token)) {
         auto& tag = std::get<TagToken>(*m_current_token);
-        tag.set_attribute(m_current_attribute_name, m_current_attribute_value);
+        if (tag.get_attribute(m_current_attribute_name).has_value()) {
+            parse_error("duplicate-attribute"_s);
+        } else {
+            tag.set_attribute(m_current_attribute_name, m_current_attribute_value);
+        }
     }
     m_current_attribute_name.clear();
     m_current_attribute_value.clear();

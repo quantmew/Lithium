@@ -164,6 +164,7 @@ void push_active_formatting_element(RefPtr<dom::Element> element, const Token& t
     // Special element checks
     [[nodiscard]] static bool is_special_element(const String& tag_name);
     [[nodiscard]] static bool is_formatting_element(const String& tag_name);
+    [[nodiscard]] static bool is_form_associated(const String& tag_name);
 
     // Error reporting
     void parse_error(const String& message);
@@ -172,6 +173,7 @@ void push_active_formatting_element(RefPtr<dom::Element> element, const Token& t
     void reset_insertion_mode_appropriately();
 
     void acknowledge_self_closing_flag() { m_self_closing_flag_acknowledged = true; }
+    void associate_form_owner(dom::Element* element, const TagToken& token);
 
     // Document
     RefPtr<dom::Document> m_document;

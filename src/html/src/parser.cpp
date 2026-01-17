@@ -121,8 +121,27 @@ RefPtr<dom::Document> Parser::parse(const String& html) {
     });
 
     // Process tokens
+    m_collecting_script = false;
     while (auto token = tokenizer.next_token()) {
         builder.process_token(*token);
+        if (m_script_callback) {
+            if (is_start_tag_named(*token, "script"_s)) {
+                m_collecting_script = true;
+                m_script_buffer.clear();
+            }
+            if (m_collecting_script) {
+                if (auto* ch = std::get_if<CharacterToken>(&*token)) {
+                    m_script_buffer.append(ch->code_point);
+                }
+            }
+            if (m_collecting_script && is_end_tag_named(*token, "script"_s)) {
+                auto text = m_script_buffer.build();
+                m_collecting_script = false;
+                m_in_script_callback = true;
+                m_script_callback(text);
+                m_in_script_callback = false;
+            }
+        }
         if (is_eof(*token)) {
             break;
         }
@@ -228,11 +247,19 @@ void Parser::begin() {
     });
     m_streaming_open = true;
     m_seen_first_chunk = false;
+    m_streaming_detected_charset = false;
+    m_streaming_unsupported = false;
+    m_collecting_script = false;
 }
 
 void Parser::write(const String& html) {
     if (!m_streaming_open) {
         begin();
+    }
+
+    if (m_in_script_callback && m_streaming_tokenizer) {
+        m_streaming_tokenizer->append_input(html);
+        return;
     }
     String chunk = html;
     if (!m_seen_first_chunk) {
@@ -240,6 +267,7 @@ void Parser::write(const String& html) {
         chunk = preprocess_input(html, unsupported);
         if (unsupported) {
             on_parse_error("unsupported-encoding"_s);
+            m_streaming_unsupported = true;
         }
         m_seen_first_chunk = true;
         m_streaming_tokenizer->set_input(chunk);
@@ -247,8 +275,41 @@ void Parser::write(const String& html) {
         m_streaming_tokenizer->append_input(chunk);
     }
 
+    if (!m_streaming_detected_charset) {
+        auto charset = sniff_meta_charset(chunk);
+        if (charset.has_value()) {
+            m_streaming_detected_charset = true;
+            if (*charset != "utf-8"_s && *charset != "utf8"_s && !m_streaming_unsupported) {
+                on_parse_error("unsupported-encoding"_s);
+                m_streaming_unsupported = true;
+            }
+        }
+    }
+
+    if (m_in_script_callback) {
+        return;
+    }
+
     while (auto token = m_streaming_tokenizer->next_token()) {
         m_streaming_builder->process_token(*token);
+        if (m_script_callback) {
+            if (is_start_tag_named(*token, "script"_s)) {
+                m_collecting_script = true;
+                m_script_buffer.clear();
+            }
+            if (m_collecting_script) {
+                if (auto* ch = std::get_if<CharacterToken>(&*token)) {
+                    m_script_buffer.append(ch->code_point);
+                }
+            }
+            if (m_collecting_script && is_end_tag_named(*token, "script"_s)) {
+                auto text = m_script_buffer.build();
+                m_collecting_script = false;
+                m_in_script_callback = true;
+                m_script_callback(text);
+                m_in_script_callback = false;
+            }
+        }
         if (is_eof(*token)) {
             m_streaming_open = false;
             break;
@@ -267,6 +328,24 @@ RefPtr<dom::Document> Parser::finish() {
     m_streaming_tokenizer->mark_end_of_stream();
     while (auto token = m_streaming_tokenizer->next_token()) {
         m_streaming_builder->process_token(*token);
+        if (m_script_callback) {
+            if (is_start_tag_named(*token, "script"_s)) {
+                m_collecting_script = true;
+                m_script_buffer.clear();
+            }
+            if (m_collecting_script) {
+                if (auto* ch = std::get_if<CharacterToken>(&*token)) {
+                    m_script_buffer.append(ch->code_point);
+                }
+            }
+            if (m_collecting_script && is_end_tag_named(*token, "script"_s)) {
+                auto text = m_script_buffer.build();
+                m_collecting_script = false;
+                m_in_script_callback = true;
+                m_script_callback(text);
+                m_in_script_callback = false;
+            }
+        }
         if (is_eof(*token)) {
             break;
         }

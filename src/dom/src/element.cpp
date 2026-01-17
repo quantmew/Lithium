@@ -38,6 +38,7 @@ RefPtr<Node> Element::clone_node(bool deep) const {
     clone->m_namespace_uri = m_namespace_uri;
     clone->m_prefix = m_prefix;
     clone->m_attributes = m_attributes;
+    clone->m_form_owner = m_form_owner;
 
     if (deep) {
         for (const auto& child : child_nodes()) {

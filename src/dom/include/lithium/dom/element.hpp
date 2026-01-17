@@ -37,6 +37,8 @@ public:
     [[nodiscard]] const String& local_name() const { return m_local_name; }
     [[nodiscard]] const String& namespace_uri() const { return m_namespace_uri; }
     [[nodiscard]] const String& prefix() const { return m_prefix; }
+    [[nodiscard]] Element* form_owner() const { return m_form_owner; }
+    void set_form_owner(Element* form) { m_form_owner = form; }
 
     // ID and class
     [[nodiscard]] String id() const { return get_attribute("id"_s).value_or(String()); }
@@ -91,6 +93,7 @@ private:
     String m_namespace_uri;
     String m_prefix;
     std::vector<Attribute> m_attributes;
+    Element* m_form_owner{nullptr};
 };
 
 // ============================================================================

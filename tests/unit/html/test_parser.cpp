@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "lithium/html/parser.hpp"
 #include "lithium/core/string.hpp"
+#include <algorithm>
 
 using namespace lithium;
 using namespace lithium::html;
@@ -258,6 +259,22 @@ TEST_F(HTMLParserTest, TableCharactersAreFosterParented) {
     }
 }
 
+TEST_F(HTMLParserTest, TemplateContentFosterParentingWithinTable) {
+    auto doc = parse("<div><template><table>text<tr><td>cell</td></tr></table></template></div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* container = body->first_element_child();
+    ASSERT_NE(container, nullptr);
+    auto* tmpl = container->first_element_child();
+    ASSERT_NE(tmpl, nullptr);
+    ASSERT_TRUE(tmpl->first_child()->is_text());
+    EXPECT_EQ(tmpl->first_child()->text_content(), String("text"));
+    auto* table = tmpl->first_element_child();
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->local_name(), String("table"));
+}
+
 TEST_F(HTMLParserTest, CharacterReferencesAreResolved) {
     auto doc = parse("<div title=\"Tom &amp; Jerry\">&lt;span&gt;&#x41;&#65;</div>");
 
@@ -342,6 +359,113 @@ TEST_F(HTMLParserTest, DuplicateAttributesKeepFirst) {
     EXPECT_EQ(div->id(), String("one"));
 }
 
+TEST_F(HTMLParserTest, DuplicateAttributesReportError) {
+    Parser parser;
+    auto doc = parser.parse(String("<div id=\"one\" ID=\"two\"></div>"));
+    ASSERT_NE(doc, nullptr);
+
+    bool has_duplicate_error = std::any_of(parser.errors().begin(), parser.errors().end(),
+        [](const String& err) { return err.find("duplicate"_s).has_value(); });
+    EXPECT_TRUE(has_duplicate_error);
+}
+
+TEST_F(HTMLParserTest, FormOwnerFromAncestorForm) {
+    auto doc = parse("<form id='f'><input name='a'></form>");
+    auto forms = doc->get_elements_by_tag_name("form"_s);
+    ASSERT_EQ(forms.size(), 1u);
+    auto inputs = doc->get_elements_by_tag_name("input"_s);
+    ASSERT_EQ(inputs.size(), 1u);
+    EXPECT_EQ(inputs.front()->form_owner(), forms.front());
+}
+
+TEST_F(HTMLParserTest, FormAttributeAssociatesControl) {
+    auto doc = parse("<form id='f'></form><div><input form='f' name='a'></div>");
+    auto forms = doc->get_elements_by_tag_name("form"_s);
+    ASSERT_EQ(forms.size(), 1u);
+    auto inputs = doc->get_elements_by_tag_name("input"_s);
+    ASSERT_EQ(inputs.size(), 1u);
+    EXPECT_EQ(inputs.front()->form_owner(), forms.front());
+}
+
+TEST_F(HTMLParserTest, OptionInheritsFormFromSelectFormAttr) {
+    auto doc = parse("<form id='f'></form><select form='f'><option>One</option></select>");
+    auto forms = doc->get_elements_by_tag_name("form"_s);
+    ASSERT_EQ(forms.size(), 1u);
+    auto options = doc->get_elements_by_tag_name("option"_s);
+    ASSERT_EQ(options.size(), 1u);
+    EXPECT_EQ(options.front()->form_owner(), forms.front());
+}
+
+TEST_F(HTMLParserTest, TemplateControlsDoNotGainFormOwner) {
+    auto doc = parse("<template><input form='f'></template><form id='f'></form>");
+    auto templates = doc->get_elements_by_tag_name("template"_s);
+    ASSERT_EQ(templates.size(), 1u);
+    auto* tmpl = templates.front();
+    ASSERT_NE(tmpl, nullptr);
+    ASSERT_NE(tmpl->first_element_child(), nullptr);
+    auto* input = tmpl->first_element_child();
+    EXPECT_EQ(input->form_owner(), nullptr);
+}
+
+TEST_F(HTMLParserTest, IsindexCompatibilityCreatesForm) {
+    auto doc = parse("<isindex action='/search' prompt='Find:'>");
+    auto forms = doc->get_elements_by_tag_name("form"_s);
+    ASSERT_EQ(forms.size(), 1u);
+    auto inputs = doc->get_elements_by_tag_name("input"_s);
+    ASSERT_EQ(inputs.size(), 1u);
+    auto* form = forms.front();
+    auto* input = inputs.front();
+    EXPECT_EQ(input->form_owner(), form);
+    EXPECT_EQ(form->get_attribute("action"_s).value_or(String()), String("/search"));
+    EXPECT_EQ(input->get_attribute("name"_s).value_or(String()), String("isindex"));
+    EXPECT_EQ(input->get_attribute("type"_s).value_or(String()), String("text"));
+    auto labels = doc->get_elements_by_tag_name("label"_s);
+    ASSERT_EQ(labels.size(), 1u);
+    EXPECT_TRUE(labels.front()->text_content().starts_with("Find:"_s));
+}
+
+TEST_F(HTMLParserTest, HeadImplicitlyClosedWhenBodyStarts) {
+    auto doc = parse("<html><head><meta charset='utf-8'><body><p>hi");
+    auto* head = doc->head();
+    ASSERT_NE(head, nullptr);
+    ASSERT_NE(head->first_element_child(), nullptr);
+    EXPECT_EQ(head->first_element_child()->local_name(), String("meta"));
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    ASSERT_NE(body->first_element_child(), nullptr);
+    EXPECT_EQ(body->first_element_child()->local_name(), String("p"));
+    EXPECT_EQ(body->first_element_child()->text_content(), String("hi"));
+}
+
+TEST_F(HTMLParserTest, TableSectionsImplicitlyCloseWithNewSections) {
+    auto doc = parse("<table><thead><tr><td>a<tbody><tr><td>b</table>");
+    auto tables = doc->get_elements_by_tag_name("table"_s);
+    ASSERT_EQ(tables.size(), 1u);
+    auto* table = tables.front();
+    ASSERT_NE(table, nullptr);
+    auto* thead = table->first_element_child();
+    ASSERT_NE(thead, nullptr);
+    EXPECT_EQ(thead->local_name(), String("thead"));
+    auto* tbody = thead->next_element_sibling();
+    ASSERT_NE(tbody, nullptr);
+    EXPECT_EQ(tbody->local_name(), String("tbody"));
+    EXPECT_EQ(thead->text_content(), String("a"));
+    EXPECT_EQ(tbody->text_content(), String("b"));
+}
+
+TEST_F(HTMLParserTest, ButtonScopeClosesParagraphInside) {
+    auto doc = parse("<button><p>in</button><p>out");
+    auto buttons = doc->get_elements_by_tag_name("button"_s);
+    ASSERT_EQ(buttons.size(), 1u);
+    auto* button = buttons.front();
+    ASSERT_NE(button->first_element_child(), nullptr);
+    EXPECT_EQ(button->first_element_child()->local_name(), String("p"));
+    EXPECT_EQ(button->text_content(), String("in"));
+    auto ps = doc->get_elements_by_tag_name("p"_s);
+    ASSERT_GE(ps.size(), 2u);
+    EXPECT_EQ(ps.back()->text_content(), String("out"));
+}
+
 TEST_F(HTMLParserTest, SelfClosingNonVoidRaisesErrorButInserts) {
     Parser parser;
     auto doc = parser.parse(String("<div/>"));
@@ -351,6 +475,26 @@ TEST_F(HTMLParserTest, SelfClosingNonVoidRaisesErrorButInserts) {
     ASSERT_NE(div, nullptr);
     EXPECT_EQ(div->local_name(), String("div"));
     EXPECT_FALSE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, SelfClosingVoidIsAcknowledged) {
+    Parser parser;
+    auto doc = parser.parse(String("<div><br/></div>"));
+    ASSERT_NE(doc, nullptr);
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    ASSERT_NE(body->first_element_child(), nullptr);
+    EXPECT_TRUE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, MultipleNonVoidSelfClosingAccumulatesErrors) {
+    Parser parser;
+    auto doc = parser.parse(String("<div/><p/>"));
+    auto divs = doc->get_elements_by_tag_name("div"_s);
+    auto ps = doc->get_elements_by_tag_name("p"_s);
+    EXPECT_EQ(divs.size(), 1u);
+    EXPECT_EQ(ps.size(), 1u);
+    EXPECT_GE(parser.errors().size(), 2u);
 }
 
 TEST_F(HTMLParserTest, QuirksAndLimitedQuirksFromDoctype) {
@@ -637,6 +781,60 @@ TEST_F(HTMLParserTest, ScriptDoubleEscapedKeepsSingleScript) {
     EXPECT_FALSE(parser.errors().empty());
 }
 
+TEST_F(HTMLParserTest, ScriptCallbackInjectsDocumentWriteContent) {
+    Parser parser;
+    String captured;
+    parser.set_script_callback([&](const String& text) {
+        captured = text;
+        parser.write("<p>written</p>");
+    });
+    parser.begin();
+    parser.write("<html><body><script>hello()</script><div>after</div>");
+    auto doc = parser.finish();
+
+    EXPECT_EQ(captured, String("hello()"));
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* script = body->first_element_child();
+    ASSERT_NE(script, nullptr);
+    EXPECT_EQ(script->local_name(), String("script"));
+    auto* div = script->next_element_sibling();
+    ASSERT_NE(div, nullptr);
+    EXPECT_EQ(div->local_name(), String("div"));
+    EXPECT_EQ(div->text_content(), String("after"));
+    auto* p = div->next_element_sibling();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->local_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("written"));
+}
+
+TEST_F(HTMLParserTest, SelfClosingHeadRaisesError) {
+    Parser parser;
+    auto doc = parser.parse(String("<html><head/></html>"));
+    ASSERT_NE(doc, nullptr);
+    EXPECT_FALSE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, FosterParentingTemplateSiblingInsideTable) {
+    auto doc = parse("<div><table><template></template>text<tr><td>cell</td></tr></table></div>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* container = body->first_element_child();
+    ASSERT_NE(container, nullptr);
+    auto* first = container->first_child();
+    ASSERT_NE(first, nullptr);
+    ASSERT_TRUE(first->is_element());
+    auto* template_el = first->as_element();
+    ASSERT_NE(template_el, nullptr);
+    auto* text_node = template_el->next_sibling();
+    ASSERT_TRUE(text_node && text_node->is_text());
+    EXPECT_EQ(text_node->text_content(), String("text"));
+    auto* table = text_node->next_sibling()->as_element();
+    ASSERT_NE(table, nullptr);
+    EXPECT_EQ(table->local_name(), String("table"));
+}
+
 TEST_F(HTMLParserTest, SelectOptgroupAndOptionScopeClosing) {
     auto doc = parse("<select><optgroup label='g'><option>One</select><p>after</p>");
 
@@ -696,6 +894,26 @@ TEST_F(HTMLParserTest, AdoptionAgencyRepairsMisnestedFormatting) {
     EXPECT_FALSE(parser.errors().empty());
 }
 
+TEST_F(HTMLParserTest, AdoptionAgencyHandlesDeeperMismatches) {
+    auto doc = parse("<p><b><i>1</b>2</i>");
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* p = body->first_element_child();
+    ASSERT_NE(p, nullptr);
+    auto* first = p->first_element_child();
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->local_name(), String("b"));
+    ASSERT_NE(first->first_element_child(), nullptr);
+    EXPECT_EQ(first->first_element_child()->local_name(), String("i"));
+    EXPECT_EQ(first->first_element_child()->text_content(), String("12"));
+}
+
+TEST_F(HTMLParserTest, ActiveFormattingElementListPrunesOldEntries) {
+    auto doc = parse("<p><b id='1'><b id='2'><b id='3'><b id='4'>x</b></b></b></b>");
+    auto bs = doc->get_elements_by_tag_name("b"_s);
+    ASSERT_EQ(bs.size(), 4u);
+}
+
 TEST_F(HTMLParserTest, ForeignObjectThenSvgKeepsNamespaces) {
     auto doc = parse("<svg><foreignObject><p>html</p></foreignObject><g><title>t</title></g></svg><p>after</p>");
 
@@ -726,6 +944,81 @@ TEST_F(HTMLParserTest, ForeignObjectThenSvgKeepsNamespaces) {
     EXPECT_EQ(after->namespace_uri(), String());
     EXPECT_EQ(after->local_name(), String("p"));
     EXPECT_EQ(after->text_content(), String("after"));
+}
+
+TEST_F(HTMLParserTest, SvgAttributesAdjustedAndPrefixesHandled) {
+    auto doc = parse("<svg viewbox='0 0 1 1' preserveaspectratio='xMidYMid meet' xlink:href='one' xml:lang='en' xmlns:custom='u'><lineargradient id='g'></lineargradient></svg>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* svg = body->first_element_child();
+    ASSERT_NE(svg, nullptr);
+    EXPECT_EQ(svg->namespace_uri(), String("http://www.w3.org/2000/svg"));
+    auto attrs = svg->attributes();
+    bool has_viewbox = false;
+    bool has_preserve = false;
+    for (const auto& attr : attrs) {
+        if (attr.name == "viewBox"_s) has_viewbox = true;
+        if (attr.name == "preserveAspectRatio"_s) has_preserve = true;
+    }
+    EXPECT_TRUE(has_viewbox);
+    EXPECT_TRUE(has_preserve);
+    EXPECT_EQ(svg->get_attribute("viewBox"_s).value_or(String()), String("0 0 1 1"));
+    EXPECT_EQ(svg->get_attribute("xlink:href"_s).value_or(String()), String("one"));
+    EXPECT_EQ(svg->get_attribute("xml:lang"_s).value_or(String()), String("en"));
+    EXPECT_EQ(svg->get_attribute("xmlns:custom"_s).value_or(String()), String("u"));
+
+    auto* gradient = svg->first_element_child();
+    ASSERT_NE(gradient, nullptr);
+    EXPECT_EQ(gradient->local_name(), String("linearGradient"));
+}
+
+TEST_F(HTMLParserTest, MathmlAttributeAdjusted) {
+    auto doc = parse("<math><mi definitionurl='foo'></mi></math>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* math = body->first_element_child();
+    ASSERT_NE(math, nullptr);
+    auto* mi = math->first_element_child();
+    ASSERT_NE(mi, nullptr);
+    EXPECT_EQ(mi->get_attribute("definitionURL"_s).value_or(String()), String("foo"));
+}
+
+TEST_F(HTMLParserTest, MathmlTextIntegrationFallsBackToHtml) {
+    auto doc = parse("<math><mtext><span id='x'>hi</span></mtext><mtext><mglyph></mglyph></mtext></math>");
+
+    auto spans = doc->get_elements_by_tag_name("span"_s);
+    ASSERT_EQ(spans.size(), 1u);
+    EXPECT_EQ(spans.front()->namespace_uri(), String());
+
+    auto mglyphs = doc->get_elements_by_tag_name("mglyph"_s);
+    ASSERT_EQ(mglyphs.size(), 1u);
+    EXPECT_EQ(mglyphs.front()->namespace_uri(), String("http://www.w3.org/1998/Math/MathML"));
+}
+
+TEST_F(HTMLParserTest, AnnotationXmlHtmlIntegrationByEncoding) {
+    auto doc = parse("<math><annotation-xml encoding='application/xhtml+xml'><p>html</p></annotation-xml><annotation-xml encoding='text/html'><div>also html</div></annotation-xml></math>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* math = body->first_element_child();
+    ASSERT_NE(math, nullptr);
+    auto* first_ann = math->first_element_child();
+    ASSERT_NE(first_ann, nullptr);
+    EXPECT_EQ(first_ann->namespace_uri(), String("http://www.w3.org/1998/Math/MathML"));
+    auto* p = first_ann->first_element_child();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->namespace_uri(), String());
+    EXPECT_EQ(p->local_name(), String("p"));
+
+    auto* second_ann = first_ann->next_element_sibling();
+    ASSERT_NE(second_ann, nullptr);
+    auto* div = second_ann->first_element_child();
+    ASSERT_NE(div, nullptr);
+    EXPECT_EQ(div->namespace_uri(), String());
+    EXPECT_EQ(div->local_name(), String("div"));
+    EXPECT_EQ(div->text_content(), String("also html"));
 }
 
 TEST_F(HTMLParserTest, AdditionalQuirksTriggers) {
@@ -789,6 +1082,29 @@ TEST_F(HTMLParserTest, UnsupportedMetaCharsetReportsError) {
     expected.append(String::from_code_point(233));
     EXPECT_EQ(p->text_content(), expected);
     EXPECT_FALSE(parser.errors().empty());
+}
+
+TEST_F(HTMLParserTest, UnsupportedMetaCharsetInBodyReportsErrorAndParses) {
+    Parser parser;
+    auto doc = parser.parse(String("<html><head></head><body><meta charset='shift_jis'><p>hi</p></body></html>"));
+    ASSERT_NE(doc, nullptr);
+    EXPECT_FALSE(parser.errors().empty());
+    auto ps = doc->get_elements_by_tag_name("p"_s);
+    ASSERT_EQ(ps.size(), 1u);
+    EXPECT_EQ(ps.front()->text_content(), String("hi"));
+}
+
+TEST_F(HTMLParserTest, StreamingUnsupportedCharsetTriggersError) {
+    Parser parser;
+    parser.begin();
+    parser.write("<div>");
+    parser.write("<meta charset='windows-1252'><p>ok</p>");
+    auto doc = parser.finish();
+    ASSERT_NE(doc, nullptr);
+    EXPECT_FALSE(parser.errors().empty());
+    auto ps = doc->get_elements_by_tag_name("p"_s);
+    ASSERT_EQ(ps.size(), 1u);
+    EXPECT_EQ(ps.front()->text_content(), String("ok"));
 }
 
 TEST_F(HTMLParserTest, DocumentWriteStreamingBuildsSingleTree) {
@@ -872,4 +1188,35 @@ TEST_F(HTMLParserTest, ParserCannotChangeModeSkipsLimitedQuirks) {
     parser.set_parser_cannot_change_mode(true);
     auto doc = parser.parse(String("<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\"><html></html>"));
     EXPECT_EQ(doc->quirks_mode(), dom::Document::QuirksMode::NoQuirks);
+}
+
+TEST_F(HTMLParserTest, TableSectionImplicitClosure) {
+    auto doc = parse("<table><tbody><tr><td>1</td></tr><tbody><tr><td>2</td></tr></table>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* table = body->first_element_child();
+    ASSERT_NE(table, nullptr);
+    ASSERT_EQ(table->local_name(), String("table"));
+    auto* first_section = table->first_element_child();
+    ASSERT_NE(first_section, nullptr);
+    ASSERT_EQ(first_section->local_name(), String("tbody"));
+    auto* second_section = first_section->next_element_sibling();
+    ASSERT_NE(second_section, nullptr);
+    EXPECT_EQ(second_section->local_name(), String("tbody"));
+}
+
+TEST_F(HTMLParserTest, TableCellClosedOnTableEnd) {
+    auto doc = parse("<table><tr><td>hi</table><p>after</p>");
+
+    auto* body = doc->body();
+    ASSERT_NE(body, nullptr);
+    auto* outer_table = body->first_element_child();
+    ASSERT_NE(outer_table, nullptr);
+    auto* after = outer_table->next_element_sibling();
+    ASSERT_NE(after, nullptr);
+    auto* p = after->as_element();
+    ASSERT_NE(p, nullptr);
+    EXPECT_EQ(p->local_name(), String("p"));
+    EXPECT_EQ(p->text_content(), String("after"));
 }

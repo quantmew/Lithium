@@ -135,6 +135,68 @@ void TreeBuilder::process_in_body(const Token& token) {
             return;
         }
 
+        if (tag.name == "isindex"_s) {
+            parse_error("isindex"_s);
+            if (m_form_element && !stack_contains("template"_s)) {
+                if (tag.self_closing) acknowledge_self_closing_flag();
+                return;
+            }
+            close_p();
+
+            TagToken form_token;
+            form_token.name = "form"_s;
+            auto form_element = create_element_for_token(form_token);
+            if (auto action = tag.get_attribute("action"_s)) {
+                form_element->set_attribute("action"_s, *action);
+            }
+            insert_element(form_element);
+            if (!stack_contains("template"_s)) {
+                m_form_element = form_element.get();
+            }
+
+            TagToken hr_token;
+            hr_token.name = "hr"_s;
+            process_token(hr_token);
+
+            TagToken label_token;
+            label_token.name = "label"_s;
+            process_token(label_token);
+
+            String prompt = tag.get_attribute("prompt"_s).value_or("This is a searchable index. Enter search keywords: "_s);
+            for (char c : prompt.view()) {
+                insert_character(static_cast<unicode::CodePoint>(c));
+            }
+
+            TagToken input_token;
+            input_token.name = "input"_s;
+            input_token.set_attribute("name"_s, "isindex"_s);
+            input_token.set_attribute("type"_s, "text"_s);
+            for (const auto& [name, value] : tag.attributes) {
+                auto lower = name.to_lowercase();
+                if (lower == "name"_s || lower == "prompt"_s || lower == "action"_s) continue;
+                input_token.set_attribute(name, value);
+            }
+            process_token(input_token);
+
+            if (current_node() && current_node()->local_name() == "label"_s) {
+                pop_current_element();
+            }
+
+            TagToken hr2_token;
+            hr2_token.name = "hr"_s;
+            process_token(hr2_token);
+
+            while (current_node() && current_node()->local_name() != "form"_s) {
+                pop_current_element();
+            }
+            if (current_node()) {
+                pop_current_element();
+            }
+            m_form_element = nullptr;
+            if (tag.self_closing) acknowledge_self_closing_flag();
+            return;
+        }
+
         if (tag.name == "li"_s) {
             m_frameset_ok = false;
             if (stack_contains_in_list_item_scope("li"_s)) {
@@ -312,7 +374,7 @@ void TreeBuilder::process_in_body(const Token& token) {
         }
 
         if (tag.name == "body"_s) {
-            if (!stack_contains("body"_s)) {
+            if (!stack_contains_in_scope("body"_s)) {
                 parse_error("No body to close"_s);
                 return;
             }
@@ -321,7 +383,7 @@ void TreeBuilder::process_in_body(const Token& token) {
         }
 
         if (tag.name == "html"_s) {
-            if (!stack_contains("body"_s)) {
+            if (!stack_contains_in_scope("body"_s)) {
                 parse_error("No body to close"_s);
                 return;
             }
