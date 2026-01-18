@@ -6,6 +6,9 @@
 
 namespace lithium::platform {
 
+// Forward declarations
+struct GraphicsConfig;
+
 // ============================================================================
 // Graphics Context - Platform graphics abstraction
 // ============================================================================
@@ -16,6 +19,12 @@ public:
 
     // Factory
     [[nodiscard]] static std::unique_ptr<GraphicsContext> create(Window* window);
+
+    // Factory with backend configuration
+    [[nodiscard]] static std::unique_ptr<GraphicsContext> create(
+        Window* window,
+        const GraphicsConfig& config
+    );
 
     // Context management
     virtual void make_current() = 0;

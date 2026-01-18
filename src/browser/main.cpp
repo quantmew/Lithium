@@ -6,10 +6,69 @@
 
 #include "lithium/browser/engine.hpp"
 #include "lithium/platform/window.hpp"
+#include "lithium/platform/graphics_config.hpp"
+#include "lithium/platform/graphics_backend.hpp"
 #include "lithium/core/logger.hpp"
 #include <iostream>
+#include <sstream>
 
 using namespace lithium;
+
+void print_usage(const char* program_name) {
+    std::cout << "Usage: " << program_name << " [options] [URL]\n"
+              << "\n"
+              << "Options:\n"
+              << "  --backend=TYPE    Graphics backend to use\n"
+              << "                    Available: auto, software, opengl, direct2d\n"
+              << "                    Default: auto\n"
+              << "  --no-vsync        Disable vertical synchronization\n"
+              << "  --msaa=N          Enable MSAA with N samples (2, 4, 8)\n"
+              << "  --no-fallback     Disable fallback to software rendering\n"
+              << "  --list-backends   List available graphics backends\n"
+              << "  --help            Show this help message\n"
+              << "\n"
+              << "Examples:\n"
+              << "  " << program_name << " --backend=opengl https://example.com\n"
+              << "  " << program_name << " --backend=direct2d --no-vsync\n"
+              << "  " << program_name << " --list-backends\n";
+}
+
+platform::GraphicsConfig parse_graphics_config(int argc, char* argv[]) {
+    platform::GraphicsConfig config;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        if (arg == "--backend=auto") {
+            config.preferred_backend = platform::GraphicsConfig::BackendType::Auto;
+        } else if (arg == "--backend=software") {
+            config.preferred_backend = platform::GraphicsConfig::BackendType::Software;
+        } else if (arg == "--backend=opengl") {
+            config.preferred_backend = platform::GraphicsConfig::BackendType::OpenGL;
+        } else if (arg == "--backend=direct2d") {
+            config.preferred_backend = platform::GraphicsConfig::BackendType::Direct2D;
+        } else if (arg == "--no-vsync") {
+            config.enable_vsync = false;
+        } else if (arg.find("--msaa=") == 0) {
+            int samples = std::stoi(arg.substr(7));
+            config.msaa_samples = samples;
+        } else if (arg == "--no-fallback") {
+            config.allow_fallback = false;
+        }
+    }
+
+    return config;
+}
+
+std::string get_backend_name(platform::GraphicsConfig::BackendType type) {
+    switch (type) {
+        case platform::GraphicsConfig::BackendType::Auto: return "Auto";
+        case platform::GraphicsConfig::BackendType::OpenGL: return "OpenGL";
+        case platform::GraphicsConfig::BackendType::Direct2D: return "Direct2D";
+        case platform::GraphicsConfig::BackendType::Software: return "Software";
+    }
+    return "Unknown";
+}
 
 int main(int argc, char* argv[]) {
     // Initialize logging
@@ -18,6 +77,45 @@ int main(int argc, char* argv[]) {
 
     LITHIUM_LOG_INFO("Lithium Browser v0.1.0");
 
+    // Check for help flag
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--help") {
+            print_usage(argv[0]);
+            return 0;
+        }
+    }
+
+    // Check for list backends flag
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--list-backends") {
+            std::cout << "Available graphics backends:\n";
+
+            auto backends = platform::GraphicsBackendFactory::available_backends();
+            for (const auto& backend : backends) {
+                std::string name = get_backend_name(backend);
+                std::cout << "  - " << name;
+
+                // Query capabilities
+                auto caps_result = platform::GraphicsBackendFactory::query_capabilities(backend);
+                if (caps_result.is_ok()) {
+                    auto& caps = caps_result.value();
+                    std::cout << " (" << caps.backend_name;
+                    if (caps.hardware_accelerated) {
+                        std::cout << ", Hardware Accelerated";
+                    }
+                    std::cout << ")\n";
+                } else {
+                    std::cout << "\n";
+                }
+            }
+
+            return 0;
+        }
+    }
+
+    // Parse graphics configuration
+    auto graphics_config = parse_graphics_config(argc, argv);
+
     // Initialize platform
     if (!platform::platform::init()) {
         LITHIUM_LOG_ERROR("Failed to initialize platform");
@@ -25,24 +123,40 @@ int main(int argc, char* argv[]) {
     }
 
     // Create window
-    platform::WindowConfig config;
-    config.title = "Lithium Browser";
-    config.width = 1280;
-    config.height = 720;
+    platform::WindowConfig window_config;
+    window_config.title = "Lithium Browser";
+    window_config.width = 1280;
+    window_config.height = 720;
 
-    auto window = platform::Window::create(config);
+    auto window = platform::Window::create(window_config);
     if (!window) {
         LITHIUM_LOG_ERROR("Failed to create window");
         platform::platform::shutdown();
         return 1;
     }
 
-    // Create graphics context
-    auto graphics = platform::GraphicsContext::create(window.get());
+    // Create graphics context with backend selection
+    LITHIUM_LOG_INFO("Creating graphics context with backend: {}",
+                     get_backend_name(graphics_config.preferred_backend));
+
+    auto graphics = platform::GraphicsContext::create(window.get(), graphics_config);
     if (!graphics) {
         LITHIUM_LOG_ERROR("Failed to create graphics context");
         platform::platform::shutdown();
         return 1;
+    }
+
+    // Query and display backend capabilities
+    auto caps_result = platform::GraphicsBackendFactory::query_capabilities(
+        graphics_config.preferred_backend
+    );
+
+    if (caps_result.is_ok()) {
+        auto& caps = caps_result.value();
+        LITHIUM_LOG_INFO("Graphics Backend: {} {}", caps.backend_name, caps.version_string);
+        LITHIUM_LOG_INFO("Renderer: {}", caps.renderer_name);
+        LITHIUM_LOG_INFO("Vendor: {}", caps.vendor_name);
+        LITHIUM_LOG_INFO("Hardware Accelerated: {}", caps.hardware_accelerated ? "Yes" : "No");
     }
 
     // Create browser engine
@@ -59,9 +173,15 @@ int main(int argc, char* argv[]) {
     });
 
     // Load initial URL or default page
+    // URL is the first argument that's not an option (doesn't start with --)
     String initial_url = "about:blank";
-    if (argc > 1) {
-        initial_url = argv[1];
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg.find("--") != 0) {
+            // This is not an option, treat it as URL
+            initial_url = arg.c_str();
+            break;
+        }
     }
 
     if (initial_url == "about:blank") {

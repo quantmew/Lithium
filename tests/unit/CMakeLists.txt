@@ -79,3 +79,13 @@ if(TARGET lithium_render)
             lithium_platform
     )
 endif()
+
+# Platform module tests
+if(TARGET lithium_platform)
+    lithium_add_module_tests(platform
+        SOURCES
+            ../platform/test_graphics_backends.cpp
+        DEPENDENCIES
+            lithium_core
+    )
+endif()

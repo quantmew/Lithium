@@ -785,6 +785,26 @@ VM::InterpretResult VM::interpret(const String& source, const String& filename) 
         #define VM_CASE(name) case OpCode::name
         #define VM_NEXT() break
 
+        // ====================================================================
+        // Inline Stack Operations (for MSVC and other compilers)
+        // ====================================================================
+        #define VM_PUSH(val) push(val)
+        #define VM_POP() pop()
+        #define VM_PEEK(dist) peek(dist)
+        #define VM_PEEK_REF(dist) m_stack[m_stack.size() - 1 - (dist)]
+
+        // ====================================================================
+        // Inline Local Variable Access
+        // ====================================================================
+        #define VM_GET_LOCAL_FAST(slot) frame.lexical_env->m_locals[slot]
+        #define VM_SET_LOCAL_FAST(slot, val) (frame.lexical_env->m_locals[slot] = (val))
+
+        // ====================================================================
+        // Fast Number Arithmetic
+        // ====================================================================
+        #define VM_IS_NUMBER(v) ((v).is_number())
+        #define VM_AS_NUMBER(v) ((v).as_number())
+
         while (!m_frames.empty()) {
             // Periodic GC check
             if (++gc_check_counter >= GC_CHECK_INTERVAL) {

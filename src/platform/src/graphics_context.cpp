@@ -3,6 +3,9 @@
  */
 
 #include "lithium/platform/graphics_context.hpp"
+#include "lithium/platform/graphics_config.hpp"
+#include "lithium/platform/graphics_backend.hpp"
+#include "lithium/core/logger.hpp"
 #include <algorithm>
 #include <stack>
 #include <cstring>
@@ -259,6 +262,38 @@ private:
 // ============================================================================
 
 std::unique_ptr<GraphicsContext> GraphicsContext::create(Window* window) {
+    // Use default backend selection with default config
+    GraphicsConfig config;
+    auto result = GraphicsBackendFactory::create(window, config);
+
+    if (result.is_ok()) {
+        return std::move(result.value());
+    }
+
+    // Fallback to software rendering
+    LITHIUM_LOG_WARN("Backend creation failed, falling back to software rendering");
+    return std::make_unique<SoftwareGraphicsContext>(window);
+}
+
+std::unique_ptr<GraphicsContext> GraphicsContext::create(
+    Window* window,
+    const GraphicsConfig& config
+) {
+    auto result = GraphicsBackendFactory::create(window, config);
+
+    if (result.is_ok()) {
+        return std::move(result.value());
+    }
+
+    // If fallback is disabled or explicit software request, return nullptr
+    if (config.preferred_backend == GraphicsConfig::BackendType::Software ||
+        !config.allow_fallback) {
+        LITHIUM_LOG_ERROR("Failed to create graphics context with requested backend");
+        return nullptr;
+    }
+
+    // Fallback to software rendering
+    LITHIUM_LOG_WARN("Hardware backend creation failed, falling back to software rendering");
     return std::make_unique<SoftwareGraphicsContext>(window);
 }
 
