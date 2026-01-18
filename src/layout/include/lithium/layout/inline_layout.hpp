@@ -43,10 +43,10 @@ private:
     void break_lines(std::vector<LayoutBox*>& boxes);
 
     // Text measurement
-    [[nodiscard]] f32 measure_text(const String& text, const css::ComputedValue& style);
+    [[nodiscard]] f32 measure_text(const String& text, const LayoutBox& box);
 
     // Line height calculation
-    [[nodiscard]] f32 calculate_line_height(const css::ComputedValue& style);
+    [[nodiscard]] f32 calculate_line_height(const LayoutBox& box);
 
     // Vertical alignment
     void align_line_vertically(LineBox& line);

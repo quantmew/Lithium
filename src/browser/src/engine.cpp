@@ -291,6 +291,9 @@ void Engine::update_layout() {
     LITHIUM_LOG_INFO("Engine::update_layout: building layout tree (viewport: {}x{})",
         m_viewport_width, m_viewport_height);
 
+    // IMPORTANT: Invalidate all cached styles to ensure UA stylesheet is applied
+    m_style_resolver.invalidate_all();
+
     // Build layout tree
     layout::LayoutTreeBuilder builder;
     m_layout_tree = builder.build(*m_document, m_style_resolver);

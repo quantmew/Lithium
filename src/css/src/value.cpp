@@ -7,6 +7,7 @@
 #include <cctype>
 #include <algorithm>
 #include <unordered_map>
+#include <iostream>
 
 namespace lithium::css {
 
@@ -447,8 +448,10 @@ bool ValueParser::apply_property(ComputedValue& style, const String& property, c
     if (prop == "margin-top"_s) {
         if (auto length = parse_length(val)) {
             style.margin_top = *length;
+            std::cout << "    Applied margin-top: " << length->value << " em" << std::endl;
             return true;
         }
+        std::cout << "    Failed to parse margin-top: '" << val.c_str() << "'" << std::endl;
         return false;
     }
 

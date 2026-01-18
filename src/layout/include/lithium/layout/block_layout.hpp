@@ -2,6 +2,7 @@
 
 #include "box.hpp"
 #include "layout_context.hpp"
+#include <vector>
 
 namespace lithium::layout {
 
@@ -31,8 +32,12 @@ private:
     // Margin collapsing
     f32 collapse_margins(f32 margin1, f32 margin2);
 
+    // Inline child layout
+    f32 layout_inline_sequence(LayoutBox& container, const std::vector<LayoutBox*>& inline_children, f32 y);
+
     // Length resolution
     [[nodiscard]] f32 resolve_length(const css::Length& length, f32 reference) const;
+    [[nodiscard]] f32 resolve_length_with_font(const css::Length& length, f32 containing_width, f32 font_size) const;
     [[nodiscard]] std::optional<f32> resolve_length_or_auto(
         const std::optional<css::Length>& length, f32 reference) const;
 

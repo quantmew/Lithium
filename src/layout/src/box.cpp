@@ -8,6 +8,7 @@
 #include "lithium/dom/document.hpp"
 #include "lithium/css/selector.hpp"
 #include <sstream>
+#include <iostream>
 
 namespace lithium::layout {
 
@@ -161,19 +162,21 @@ std::unique_ptr<LayoutBox> LayoutTreeBuilder::build_element_box(
     dom::Element& element,
     const css::StyleResolver& resolver) {
 
-    auto computed = resolver.get_computed_style(element);
-    if (!computed) {
-        return nullptr;
-    }
+    // Use resolve() to compute (or recompute after cache invalidation)
+    css::ComputedValue computed = resolver.resolve(element);
 
     // Check display property
-    if (computed->display == css::Display::None) {
+    if (computed.display == css::Display::None) {
+        std::cout << "build_element_box: element '" << element.tag_name().c_str() << "' has display:none" << std::endl;
         return nullptr;
     }
 
-    BoxType type = determine_box_type(*computed);
+    BoxType type = determine_box_type(computed);
     auto box = std::make_unique<LayoutBox>(type, &element);
-    box->set_style(*computed);
+    box->set_style(computed);
+
+    std::cout << "build_element_box: created box for '" << element.tag_name().c_str()
+              << "' type=" << (type == BoxType::Block ? "Block" : "Inline") << std::endl;
 
     // Build children
     for (auto* child = element.first_child(); child; child = child->next_sibling()) {
@@ -189,6 +192,9 @@ std::unique_ptr<LayoutBox> LayoutTreeBuilder::build_element_box(
             }
         }
     }
+
+    std::cout << "build_element_box: finished building '" << element.tag_name().c_str()
+              << "' layout_box children=" << box->children().size() << std::endl;
 
     return box;
 }

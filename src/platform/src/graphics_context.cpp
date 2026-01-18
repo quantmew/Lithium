@@ -40,9 +40,6 @@ public:
         #ifdef _WIN32
             // 增加帧计数
             m_frame_count++;
-
-            // 不使用RedrawWindow/UpdateWindow，因为它们会触发WM_PAINT清除内容
-            // 只使用GdiFlush确保GDI命令被发送到显卡
             GdiFlush();
         #endif
     }
@@ -59,29 +56,8 @@ public:
     void end_frame() override {}
 
     void clear(const Color& color) override {
-        // 完全禁用clear，让它保持空
-        // 只在第一帧绘制一次白色背景
-        static bool first_frame = true;
-        if (first_frame) {
-            first_frame = false;
-
-            m_framebuffer.fill(color);
-
-            #ifdef _WIN32
-            HWND hwnd = static_cast<HWND>(m_window->native_handle());
-            HDC hdc = GetDC(hwnd);
-            if (hdc) {
-                RECT rect;
-                GetClientRect(hwnd, &rect);
-                COLORREF bg_color = RGB(color.r, color.g, color.b);
-                HBRUSH brush = CreateSolidBrush(bg_color);
-                FillRect(hdc, &rect, brush);
-                DeleteObject(brush);
-                ReleaseDC(hwnd, hdc);
-                GdiFlush();
-            }
-            #endif
-        }
+        // 填充framebuffer
+        m_framebuffer.fill(color);
     }
 
     void fill_rect(const RectF& rect, const Color& color) override {
@@ -147,98 +123,39 @@ public:
 
     void draw_text(const PointF& position, const String& text, const Color& color, f32 size) override {
         #ifdef _WIN32
-        // 跳过CSS代码和空文本
+        // Skip CSS code and empty text
         if (text.length() > 100 || text.empty() || text[0] == '\n' || text[0] == ' ') {
             return;
         }
 
+        // Draw text directly to window DC at computed position
         HWND hwnd = static_cast<HWND>(m_window->native_handle());
         HDC hdc = GetDC(hwnd);
-
         if (hdc) {
-            // 只在第一帧绘制所有内容，之后不再绘制
-            static bool already_drawn = false;
-            if (already_drawn) {
-                ReleaseDC(hwnd, hdc);
-                return;
+            SetTextColor(hdc, RGB(color.r, color.g, color.b));
+            SetBkMode(hdc, TRANSPARENT);
+
+            // Create font
+            HFONT font = CreateFontA(
+                static_cast<int>(size),
+                0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial"
+            );
+            if (font) {
+                HFONT oldFont = (HFONT)SelectObject(hdc, font);
+                TextOutA(hdc, static_cast<int>(position.x), static_cast<int>(position.y),
+                        text.c_str(), static_cast<int>(text.length()));
+                SelectObject(hdc, oldFont);
+                DeleteObject(font);
             }
 
-            // 首先绘制绿色测试文字
-            SetTextColor(hdc, RGB(0, 255, 0));  // 绿色
-            SetBkMode(hdc, TRANSPARENT);
-            HFONT testFont = CreateFontA(60, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
-            HFONT oldFont = (HFONT)SelectObject(hdc, testFont);
-            TextOutA(hdc, 300, 300, "GDI TEST", 8);
-            SelectObject(hdc, oldFont);
-            DeleteObject(testFont);
-            std::cout << "=== DRAWN GREEN TEST TEXT ===" << std::endl;
-
-            // 绘制所有HTML文字
-            int x = 50;
-            int y = 100;
-
-            // Welcome to Lithium (16px black)
-            SetTextColor(hdc, RGB(0, 0, 0));
-            HFONT font1 = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
-            oldFont = (HFONT)SelectObject(hdc, font1);
-            TextOutA(hdc, x, y, "Welcome to Lithium", 18);
-            y += 26;
-            SelectObject(hdc, oldFont);
-            DeleteObject(font1);
-
-            // Welcome to Lithium Browser (32px dark gray)
-            SetTextColor(hdc, RGB(51, 51, 51));
-            HFONT font2 = CreateFontA(32, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
-            oldFont = (HFONT)SelectObject(hdc, font2);
-            TextOutA(hdc, x, y, "Welcome to Lithium Browser", 26);
-            y += 42;
-            SelectObject(hdc, oldFont);
-            DeleteObject(font2);
-
-            // Lithium is lightweight... (16px gray)
-            SetTextColor(hdc, RGB(102, 102, 102));
-            font1 = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
-            oldFont = (HFONT)SelectObject(hdc, font1);
-            TextOutA(hdc, x, y, "Lithium is a lightweight browser engine", 36);
-            y += 26;
-            SelectObject(hdc, oldFont);
-            DeleteObject(font1);
-
-            // Features: (16px gray)
-            TextOutA(hdc, x, y, "Features:", 9);
-            y += 26;
-            DeleteObject(font1);
-
-            // 列表项 (16px black)
-            SetTextColor(hdc, RGB(0, 0, 0));
-            font1 = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
-            oldFont = (HFONT)SelectObject(hdc, font1);
-            TextOutA(hdc, x, y, "HTML5 parsing", 13);
-            y += 26;
-            TextOutA(hdc, x, y, "CSS styling", 12);
-            y += 26;
-            TextOutA(hdc, x, y, "JavaScript execution", 20);
-            y += 26;
-            TextOutA(hdc, x, y, "Layout and rendering", 20);
-            SelectObject(hdc, oldFont);
-            DeleteObject(font1);
-
             ReleaseDC(hwnd, hdc);
-            GdiFlush();
-
-            already_drawn = true;
-            std::cout << "=== ALL TEXT DRAWN ONCE ===" << std::endl;
         }
+
+        std::cout << "=== TEXT DRAWN: '" << text.c_str() << "' at ("
+                  << position.x << "," << position.y << ") size=" << size
+                  << " color=(" << (int)color.r << "," << (int)color.g << "," << (int)color.b << ") ===" << std::endl;
         #else
         (void)position;
         (void)text;
