@@ -4,10 +4,12 @@
 
 #include "lithium/js/object.hpp"
 #include "lithium/js/vm.hpp"
+#include "lithium/js/gc.hpp"
 #include <chrono>
 #include <cmath>
 #include <ctime>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 
 namespace lithium::js {
@@ -42,6 +44,11 @@ bool Object::has_own_property(const String& name) const {
 }
 
 Value Object::get_property(const String& name) const {
+    // Check dynamic properties first (for Map.size, Set.size, etc.)
+    if (has_dynamic_property(name)) {
+        return get_dynamic_property(name);
+    }
+
     // Fast path: check shape-based slot
     if (m_shape) {
         i32 slot = m_shape->find_slot(name);
@@ -210,18 +217,18 @@ std::vector<String> Object::own_property_names() const {
     return names;
 }
 
-void Object::trace() {
-    // Mark slot values
+void Object::trace(GarbageCollector& gc) {
+    // Mark slot values using GC to properly add them to gray stack
     for (auto& slot : m_slots) {
-        slot.mark();
+        gc.mark_value(slot);
     }
     // Mark overflow properties
     for (auto& [_, value] : m_overflow_properties) {
-        value.mark();
+        gc.mark_value(value);
     }
     // Mark prototype
     if (m_prototype) {
-        m_prototype->mark();
+        gc.mark_object(m_prototype.get());
     }
 }
 
@@ -249,9 +256,10 @@ BoundFunction::BoundFunction(Value target, Value receiver)
     , m_receiver(std::move(receiver)) {
 }
 
-void BoundFunction::trace() {
-    m_target.mark();
-    m_receiver.mark();
+void BoundFunction::trace(GarbageCollector& gc) {
+    Object::trace(gc);
+    gc.mark_value(m_target);
+    gc.mark_value(m_receiver);
 }
 
 // ============================================================================
@@ -353,11 +361,11 @@ void Array::set_property(const String& name, const Value& value) {
     Object::set_property(name, value);
 }
 
-void Array::trace() {
+void Array::trace(GarbageCollector& gc) {
+    Object::trace(gc);
     for (auto& element : m_elements) {
-        element.mark();
+        gc.mark_value(element);
     }
-    Object::trace();
 }
 
 // ============================================================================
@@ -394,6 +402,231 @@ String DateObject::string_value() const {
     }
     oss << "." << std::setw(3) << std::setfill('0') << ms;
     return String(oss.str());
+}
+
+// ============================================================================
+// Map
+// ============================================================================
+
+MapObject::MapObject() = default;
+
+// SameValueZero equality check for Map/Set (like === but NaN === NaN)
+static bool same_value_zero(const Value& a, const Value& b) {
+    // Handle NaN case (NaN should equal NaN in SameValueZero)
+    if (a.is_number() && b.is_number()) {
+        f64 a_num = a.to_number();
+        f64 b_num = b.to_number();
+        if (std::isnan(a_num) && std::isnan(b_num)) {
+            return true;
+        }
+        return a_num == b_num;
+    }
+
+    // For objects, compare by identity (same reference)
+    if (a.is_object() && b.is_object()) {
+        return a.as_object() == b.as_object();
+    }
+
+    // For other types, use strict equality
+    return a.strict_equals(b);
+}
+
+std::optional<usize> MapObject::find_entry(const Value& key) const {
+    for (usize i = 0; i < m_entries.size(); ++i) {
+        if (same_value_zero(m_entries[i].key, key)) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+void MapObject::set(const Value& key, const Value& value) {
+    auto idx = find_entry(key);
+    if (idx.has_value()) {
+        m_entries[idx.value()].value = value;
+    } else {
+        m_entries.push_back({key, value});
+    }
+}
+
+Value MapObject::get(const Value& key) const {
+    auto idx = find_entry(key);
+    if (idx.has_value()) {
+        return m_entries[idx.value()].value;
+    }
+    return Value::undefined();
+}
+
+bool MapObject::has(const Value& key) const {
+    return find_entry(key).has_value();
+}
+
+bool MapObject::remove(const Value& key) {
+    auto idx = find_entry(key);
+    if (idx.has_value()) {
+        m_entries.erase(m_entries.begin() + idx.value());
+        return true;
+    }
+    return false;
+}
+
+void MapObject::clear() {
+    m_entries.clear();
+}
+
+void MapObject::trace(GarbageCollector& gc) {
+    Object::trace(gc);
+    for (auto& entry : m_entries) {
+        gc.mark_value(entry.key);
+        gc.mark_value(entry.value);
+    }
+}
+
+bool MapObject::has_dynamic_property(const String& name) const {
+    return name == "size"_s;
+}
+
+Value MapObject::get_dynamic_property(const String& name) const {
+    if (name == "size"_s) {
+        return Value(static_cast<f64>(m_entries.size()));
+    }
+    return Value::undefined();
+}
+
+// ============================================================================
+// Set
+// ============================================================================
+
+SetObject::SetObject() = default;
+
+std::optional<usize> SetObject::find_value(const Value& value) const {
+    for (usize i = 0; i < m_values.size(); ++i) {
+        if (same_value_zero(m_values[i], value)) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+void SetObject::add(const Value& value) {
+    if (!find_value(value).has_value()) {
+        m_values.push_back(value);
+    }
+}
+
+bool SetObject::has(const Value& value) const {
+    return find_value(value).has_value();
+}
+
+bool SetObject::remove(const Value& value) {
+    auto idx = find_value(value);
+    if (idx.has_value()) {
+        m_values.erase(m_values.begin() + idx.value());
+        return true;
+    }
+    return false;
+}
+
+void SetObject::clear() {
+    m_values.clear();
+}
+
+void SetObject::trace(GarbageCollector& gc) {
+    Object::trace(gc);
+    for (auto& value : m_values) {
+        gc.mark_value(value);
+    }
+}
+
+bool SetObject::has_dynamic_property(const String& name) const {
+    return name == "size"_s;
+}
+
+Value SetObject::get_dynamic_property(const String& name) const {
+    if (name == "size"_s) {
+        return Value(static_cast<f64>(m_values.size()));
+    }
+    return Value::undefined();
+}
+
+// ============================================================================
+// WeakMap
+// ============================================================================
+
+WeakMapObject::WeakMapObject() = default;
+
+void WeakMapObject::set(const Value& key, const Value& value) {
+    if (!key.is_object()) {
+        // WeakMap keys must be objects
+        return;
+    }
+    m_entries[key.as_object()] = value;
+}
+
+Value WeakMapObject::get(const Value& key) const {
+    if (!key.is_object()) {
+        return Value::undefined();
+    }
+    auto it = m_entries.find(key.as_object());
+    if (it != m_entries.end()) {
+        return it->second;
+    }
+    return Value::undefined();
+}
+
+bool WeakMapObject::has(const Value& key) const {
+    if (!key.is_object()) {
+        return false;
+    }
+    return m_entries.find(key.as_object()) != m_entries.end();
+}
+
+bool WeakMapObject::remove(const Value& key) {
+    if (!key.is_object()) {
+        return false;
+    }
+    return m_entries.erase(key.as_object()) > 0;
+}
+
+void WeakMapObject::trace(GarbageCollector& gc) {
+    Object::trace(gc);
+    // Only trace values, not keys (weak references)
+    for (auto& [key, value] : m_entries) {
+        gc.mark_value(value);
+    }
+}
+
+// ============================================================================
+// WeakSet
+// ============================================================================
+
+WeakSetObject::WeakSetObject() = default;
+
+void WeakSetObject::add(const Value& value) {
+    if (!value.is_object()) {
+        // WeakSet values must be objects
+        return;
+    }
+    m_values.insert(value.as_object());
+}
+
+bool WeakSetObject::has(const Value& value) const {
+    if (!value.is_object()) {
+        return false;
+    }
+    return m_values.find(value.as_object()) != m_values.end();
+}
+
+bool WeakSetObject::remove(const Value& value) {
+    if (!value.is_object()) {
+        return false;
+    }
+    return m_values.erase(value.as_object()) > 0;
+}
+
+void WeakSetObject::trace(GarbageCollector& gc) {
+    Object::trace(gc);
+    // No need to trace values (weak references)
 }
 
 } // namespace lithium::js

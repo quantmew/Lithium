@@ -31,6 +31,7 @@ public:
     [[nodiscard]] layout::LayoutBox* box() const { return m_box; }
     [[nodiscard]] RenderLayer* parent() const { return m_parent; }
     [[nodiscard]] const std::vector<std::unique_ptr<RenderLayer>>& children() const { return m_children; }
+    void set_parent(RenderLayer* parent) { m_parent = parent; }
 
     // Layer properties
     [[nodiscard]] bool needs_compositing() const { return m_compositing_reason != CompositingReason::None; }

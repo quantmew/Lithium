@@ -1,210 +1,175 @@
 /**
- * Inline Layout implementation
+ * Inline Layout implementation (simplified)
  */
 
 #include "lithium/layout/inline_layout.hpp"
-#include "lithium/layout/box.hpp"
+#include <algorithm>
 
 namespace lithium::layout {
 
-// ============================================================================
-// Line Box
-// ============================================================================
+namespace {
 
-struct LineBox {
-    f32 x{0};
-    f32 y{0};
-    f32 width{0};
-    f32 height{0};
-    f32 baseline{0};
-    std::vector<LayoutBox*> fragments;
-};
-
-// ============================================================================
-// Inline Formatting Context
-// ============================================================================
-
-class InlineFormattingContext {
-public:
-    InlineFormattingContext(LayoutBox& container, f32 containing_width)
-        : m_container(container)
-        , m_containing_width(containing_width)
-    {}
-
-    void layout() {
-        // Collect all inline-level boxes
-        std::vector<LayoutBox*> inline_boxes;
-        collect_inline_boxes(m_container, inline_boxes);
-
-        if (inline_boxes.empty()) {
-            return;
-        }
-
-        // Create line boxes
-        create_line_boxes(inline_boxes);
-
-        // Position fragments
-        position_line_boxes();
-
-        // Update container height
-        if (!m_lines.empty()) {
-            m_container.dimensions().content.height = m_current_y;
-        }
-    }
-
-private:
-    void collect_inline_boxes(LayoutBox& box, std::vector<LayoutBox*>& result) {
-        for (auto& child : box.children()) {
-            if (child->is_inline() || child->is_text()) {
-                result.push_back(child.get());
-            } else if (child->is_anonymous()) {
-                collect_inline_boxes(*child, result);
-            }
-            // Skip block-level boxes
-        }
-    }
-
-    void create_line_boxes(const std::vector<LayoutBox*>& inline_boxes) {
-        LineBox current_line;
-        auto& container_d = m_container.dimensions();
-        current_line.x = container_d.content.x;
-        current_line.y = container_d.content.y;
-
-        f32 available_width = m_containing_width;
-        f32 x = 0;
-
-        for (LayoutBox* box : inline_boxes) {
-            f32 box_width = calculate_inline_width(*box);
-            f32 box_height = calculate_inline_height(*box);
-
-            // Check if we need to wrap
-            if (x + box_width > available_width && x > 0) {
-                // Finish current line
-                current_line.width = x;
-                m_lines.push_back(current_line);
-
-                // Start new line
-                m_current_y += current_line.height;
-                current_line = LineBox{};
-                current_line.x = container_d.content.x;
-                current_line.y = container_d.content.y + m_current_y;
-                x = 0;
-            }
-
-            // Add to current line
-            current_line.fragments.push_back(box);
-            current_line.height = std::max(current_line.height, box_height);
-
-            // Calculate baseline
-            f32 baseline = box_height * 0.8f;  // Approximation
-            current_line.baseline = std::max(current_line.baseline, baseline);
-
-            x += box_width;
-        }
-
-        // Add final line
-        if (!current_line.fragments.empty()) {
-            current_line.width = x;
-            m_lines.push_back(current_line);
-            m_current_y += current_line.height;
-        }
-    }
-
-    void position_line_boxes() {
-        auto& container_d = m_container.dimensions();
-
-        f32 y = container_d.content.y;
-
-        for (auto& line : m_lines) {
-            f32 x = container_d.content.x;
-
-            // Horizontal alignment (simplified - left aligned)
-            for (LayoutBox* box : line.fragments) {
-                auto& d = box->dimensions();
-                d.content.x = x;
-                d.content.y = y + (line.baseline - d.content.height * 0.8f);
-
-                x += d.margin_box().width;
-            }
-
-            y += line.height;
-        }
-    }
-
-    f32 calculate_inline_width(LayoutBox& box) {
-        auto& d = box.dimensions();
-        const auto& style = box.style();
-
-        if (box.is_text()) {
-            // Simple calculation - real implementation uses font metrics
-            d.content.width = box.text().size() * 8.0f;
-        } else if (style.width.has_value()) {
-            d.content.width = resolve_length(*style.width);
-        }
-
-        // Add horizontal spacing
-        d.margin.left = resolve_length(style.margin_left);
-        d.margin.right = resolve_length(style.margin_right);
-        d.padding.left = resolve_length(style.padding_left);
-        d.padding.right = resolve_length(style.padding_right);
-        d.border.left = style.border_left_width;
-        d.border.right = style.border_right_width;
-
-        return d.margin_box().width;
-    }
-
-    f32 calculate_inline_height(LayoutBox& box) {
-        auto& d = box.dimensions();
-        const auto& style = box.style();
-
-        if (box.is_text()) {
-            d.content.height = 16.0f;  // Line height approximation
-        } else if (style.height.has_value()) {
-            d.content.height = resolve_length(*style.height);
-        } else {
-            d.content.height = 16.0f;
-        }
-
-        // Vertical padding/border for inline-block
-        if (box.box_type() == BoxType::InlineBlock) {
-            d.margin.top = resolve_length(style.margin_top);
-            d.margin.bottom = resolve_length(style.margin_bottom);
-            d.padding.top = resolve_length(style.padding_top);
-            d.padding.bottom = resolve_length(style.padding_bottom);
-            d.border.top = style.border_top_width;
-            d.border.bottom = style.border_bottom_width;
-        }
-
-        return d.margin_box().height;
-    }
-
-    f32 resolve_length(const css::Length& length) const {
-        switch (length.unit) {
-            case css::Length::Unit::Px:
-                return length.value;
-            case css::Length::Unit::Em:
-            case css::Length::Unit::Rem:
-                return length.value * 16.0f;
-            case css::Length::Unit::Percent:
-                return length.value / 100.0f * m_containing_width;
-            default:
-                return length.value;
-        }
-    }
-
-    LayoutBox& m_container;
-    f32 m_containing_width;
-    f32 m_current_y{0};
-    std::vector<LineBox> m_lines;
-};
-
-// ============================================================================
-// Public functions
-// ============================================================================
-
-void layout_inline_boxes(LayoutBox& container, f32 containing_width) {
-    InlineFormattingContext ifc(container, containing_width);
-    ifc.layout();
+f32 to_pixels(const css::Length& length, const LayoutContext& context, f32 reference) {
+    return static_cast<f32>(length.to_px(
+        reference,
+        context.root_font_size,
+        context.viewport_width,
+        context.viewport_height));
 }
+
+} // namespace
+
+InlineFormattingContext::InlineFormattingContext(LayoutBox& container, const LayoutContext& context)
+    : m_container(container)
+    , m_context(context) {}
+
+void InlineFormattingContext::run() {
+    std::vector<LayoutBox*> boxes;
+    collect_inline_boxes(m_container, boxes);
+
+    m_available_width = m_context.containing_block_width > 0
+        ? m_context.containing_block_width
+        : m_container.dimensions().content.width;
+
+    break_lines(boxes);
+
+    f32 line_y = m_container.dimensions().content.y;
+    for (auto& line : m_lines) {
+        align_line_vertically(line);
+        align_line_horizontally(line, m_available_width);
+
+        f32 x_cursor = m_container.dimensions().content.x;
+        for (auto& fragment : line.fragments) {
+            auto& d = fragment.box->dimensions();
+            d.content.x = x_cursor + fragment.x;
+            d.content.y = line_y + line.y;
+            x_cursor += fragment.width;
+        }
+
+        line_y += line.height;
+    }
+
+    m_container.dimensions().content.height = line_y - m_container.dimensions().content.y;
+}
+
+void InlineFormattingContext::collect_inline_boxes(LayoutBox& box, std::vector<LayoutBox*>& boxes) {
+    for (auto& child : box.children()) {
+        if (child->is_inline() || child->is_text()) {
+            boxes.push_back(child.get());
+        } else if (child->is_anonymous()) {
+            collect_inline_boxes(*child, boxes);
+        }
+    }
+}
+
+void InlineFormattingContext::layout_line(std::vector<LayoutBox*>& boxes, usize start, usize end) {
+    std::vector<LayoutBox*> slice;
+    slice.insert(slice.end(), boxes.begin() + static_cast<isize>(start), boxes.begin() + static_cast<isize>(end));
+    break_lines(slice);
+}
+
+void InlineFormattingContext::break_lines(std::vector<LayoutBox*>& boxes) {
+    if (boxes.empty()) {
+        return;
+    }
+
+    LineBox current;
+    current.y = m_current_y;
+    f32 x = 0;
+
+    for (auto* box : boxes) {
+        f32 width = inline_layout::measure_inline_width(*box, m_context);
+        f32 height = box->dimensions().content.height;
+        if (height == 0) {
+            height = calculate_line_height(box->style());
+        }
+        f32 baseline = height * 0.8f;
+
+        if (x + width > m_available_width && !current.fragments.empty()) {
+            current.height = std::max(current.height, height);
+            m_lines.push_back(current);
+            current = LineBox{};
+            m_current_y += current.height;
+            current.y = m_current_y;
+            x = 0;
+        }
+
+        current.fragments.push_back({box, x, width, baseline});
+        current.height = std::max(current.height, height);
+        current.baseline = std::max(current.baseline, baseline);
+        x += width;
+    }
+
+    if (!current.fragments.empty()) {
+        m_lines.push_back(current);
+        m_current_y += current.height;
+    }
+}
+
+f32 InlineFormattingContext::measure_text(const String& text, const css::ComputedValue& style) {
+    f32 font_px = to_pixels(style.font_size, m_context, m_context.root_font_size);
+    return static_cast<f32>(text.size()) * font_px * 0.6f;
+}
+
+f32 InlineFormattingContext::calculate_line_height(const css::ComputedValue& style) {
+    f32 font_px = to_pixels(style.font_size, m_context, m_context.root_font_size);
+    f32 lh = to_pixels(style.line_height, m_context, font_px);
+    if (lh <= 0) {
+        lh = font_px * 1.2f;
+    }
+    return lh;
+}
+
+void InlineFormattingContext::align_line_vertically(LineBox& line) {
+    if (line.baseline == 0) {
+        line.baseline = line.height * 0.8f;
+    }
+}
+
+void InlineFormattingContext::align_line_horizontally(LineBox& line, f32 available_width) {
+    (void)line;
+    (void)available_width;
+    // Left aligned by default; nothing to do here for the simplified layout.
+}
+
+namespace inline_layout {
+
+f32 measure_inline_width(LayoutBox& box, const LayoutContext& context) {
+    if (box.dimensions().content.width > 0) {
+        return box.dimensions().content.width;
+    }
+
+    const auto& style = box.style();
+    f32 font_px = to_pixels(style.font_size, context, context.root_font_size);
+
+    if (box.is_text()) {
+        return static_cast<f32>(box.text().size()) * font_px * 0.6f;
+    }
+
+    return font_px;  // Fallback width
+}
+
+f32 calculate_baseline(const LayoutBox& box) {
+    return box.dimensions().content.height * 0.8f;
+}
+
+std::vector<BreakOpportunity> find_break_opportunities(const String& text, const css::ComputedValue& style) {
+    std::vector<BreakOpportunity> breaks;
+    f32 accumulated_width = 0;
+    f32 char_width = static_cast<f32>(text.size()) > 0
+        ? (to_pixels(style.font_size, LayoutContext{}, 16.0f) * 0.6f)
+        : 0.0f;
+
+    for (usize i = 0; i < text.size(); ++i) {
+        accumulated_width += char_width;
+        if (text[i] == ' ') {
+            breaks.push_back({i + 1, accumulated_width, false});
+        }
+    }
+
+    return breaks;
+}
+
+} // namespace inline_layout
 
 } // namespace lithium::layout

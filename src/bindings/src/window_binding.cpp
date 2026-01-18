@@ -24,10 +24,10 @@ void register_window_object(js::VM& vm) {
     });
 
     // window.innerWidth
-    vm.define_global("innerWidth"_s, js::Value(800.0));
+    vm.set_global("innerWidth"_s, js::Value(800.0), false);
 
     // window.innerHeight
-    vm.define_global("innerHeight"_s, js::Value(600.0));
+    vm.set_global("innerHeight"_s, js::Value(600.0), false);
 
     // window.alert
     vm.define_native("alert"_s, [](js::VM& vm, const std::vector<js::Value>& args) -> js::Value {

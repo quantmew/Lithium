@@ -22,6 +22,9 @@ public:
     // Get the current document
     [[nodiscard]] dom::Document* document() const { return m_document.get(); }
 
+    // For embedding/tests: wrap a DOM node as a JS value
+    [[nodiscard]] js::Value wrap_node_for_script(dom::Node* node);
+
 private:
     // Window object
     void register_window();
@@ -41,9 +44,6 @@ private:
     // Event classes
     void register_event();
     void register_event_target();
-
-    // For embedding/tests: wrap a DOM node as a JS value
-    [[nodiscard]] js::Value wrap_node_for_script(dom::Node* node);
 
     // Helper: wrap DOM node as JS object
     [[nodiscard]] js::Value wrap_node(dom::Node* node);

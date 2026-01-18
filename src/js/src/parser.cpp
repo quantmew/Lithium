@@ -13,6 +13,7 @@ std::unique_ptr<Program> Parser::parse(const String& source) {
     m_lexer.set_input(source);
     advance();
 
+    auto start = capture_start_location();
     auto program = std::make_unique<Program>();
     while (!at_end()) {
         usize prev_pos = m_current.start;
@@ -23,6 +24,7 @@ std::unique_ptr<Program> Parser::parse(const String& source) {
             synchronize();
         }
     }
+    set_node_location(program.get(), start);
     return program;
 }
 
@@ -31,6 +33,7 @@ std::unique_ptr<Program> Parser::parse(std::string_view source) {
     m_lexer.set_input(source);
     advance();
 
+    auto start = capture_start_location();
     auto program = std::make_unique<Program>();
     while (!at_end()) {
         usize prev_pos = m_current.start;
@@ -41,6 +44,7 @@ std::unique_ptr<Program> Parser::parse(std::string_view source) {
             synchronize();
         }
     }
+    set_node_location(program.get(), start);
     return program;
 }
 
@@ -118,6 +122,25 @@ void Parser::synchronize() {
 }
 
 // ============================================================================
+// Location Tracking Helpers
+// ============================================================================
+
+SourceLocation Parser::capture_start_location() const {
+    SourceLocation loc;
+    loc.start_line = m_current.line;
+    loc.start_column = m_current.column;
+    return loc;
+}
+
+void Parser::set_node_location(ASTNode* node, const SourceLocation& start) {
+    if (!node) return;
+    node->location.start_line = start.start_line;
+    node->location.start_column = start.start_column;
+    node->location.end_line = m_previous.line;
+    node->location.end_column = m_previous.column;
+}
+
+// ============================================================================
 // Statements
 // ============================================================================
 
@@ -180,22 +203,28 @@ StatementPtr Parser::parse_statement() {
         return parse_with_statement();
     }
     if (match(TokenType::Semicolon)) {
-        return std::make_unique<EmptyStatement>();
+        auto start = capture_start_location();
+        auto stmt = std::make_unique<EmptyStatement>();
+        set_node_location(stmt.get(), start);
+        return stmt;
     }
 
     return parse_expression_statement();
 }
 
 StatementPtr Parser::parse_block_statement() {
+    auto start = capture_start_location();
     auto block = std::make_unique<BlockStatement>();
     while (!check(TokenType::CloseBrace) && !at_end()) {
         block->body.push_back(parse_statement());
     }
     expect(TokenType::CloseBrace, "Expected '}' after block"_s);
+    set_node_location(block.get(), start);
     return block;
 }
 
 StatementPtr Parser::parse_class_declaration() {
+    auto start = capture_start_location();
     auto cls = std::make_unique<ClassDeclaration>();
     auto name = expect(TokenType::Identifier, "Expected class name"_s);
     cls->name = name.value;
@@ -237,10 +266,12 @@ StatementPtr Parser::parse_class_declaration() {
         cls->body.push_back(std::move(method));
     }
     expect(TokenType::CloseBrace, "Expected '}' after class body"_s);
+    set_node_location(cls.get(), start);
     return cls;
 }
 
 StatementPtr Parser::parse_import_declaration() {
+    auto start = capture_start_location();
     auto decl = std::make_unique<ImportDeclaration>();
 
     if (check(TokenType::String)) {
@@ -301,10 +332,12 @@ StatementPtr Parser::parse_import_declaration() {
     }
 
     consume_semicolon_if_present();
+    set_node_location(decl.get(), start);
     return decl;
 }
 
 StatementPtr Parser::parse_export_declaration() {
+    auto start = capture_start_location();
     if (match(TokenType::Default)) {
         auto decl = std::make_unique<ExportDefaultDeclaration>();
         if (check(TokenType::Function)) {
@@ -317,6 +350,7 @@ StatementPtr Parser::parse_export_declaration() {
             decl->expression = parse_assignment_expression();
             consume_semicolon_if_present();
         }
+        set_node_location(decl.get(), start);
         return decl;
     }
 
@@ -333,6 +367,7 @@ StatementPtr Parser::parse_export_declaration() {
             decl->source = source.value;
         }
         consume_semicolon_if_present();
+        set_node_location(decl.get(), start);
         return decl;
     }
 
@@ -360,15 +395,18 @@ StatementPtr Parser::parse_export_declaration() {
             decl->source = source.value;
         }
         consume_semicolon_if_present();
+        set_node_location(decl.get(), start);
         return decl;
     }
 
     auto decl = std::make_unique<ExportNamedDeclaration>();
     decl->declaration = parse_statement();
+    set_node_location(decl.get(), start);
     return decl;
 }
 
 StatementPtr Parser::parse_variable_statement(VariableDeclaration::Kind kind) {
+    auto start = capture_start_location();
     auto decl = std::make_unique<VariableDeclaration>();
     decl->kind = kind;
 
@@ -389,10 +427,12 @@ StatementPtr Parser::parse_variable_statement(VariableDeclaration::Kind kind) {
     } while (match(TokenType::Comma));
 
     consume_semicolon_if_present();
+    set_node_location(decl.get(), start);
     return decl;
 }
 
 StatementPtr Parser::parse_function_declaration() {
+    auto start = capture_start_location();
     auto fn = std::make_unique<FunctionDeclaration>();
     auto name = expect(TokenType::Identifier, "Expected function name"_s);
     fn->name = name.value;
@@ -411,43 +451,52 @@ StatementPtr Parser::parse_function_declaration() {
         fn->body.push_back(parse_statement());
     }
     expect(TokenType::CloseBrace, "Expected '}' after function body"_s);
+    set_node_location(fn.get(), start);
     return fn;
 }
 
 StatementPtr Parser::parse_return_statement() {
+    auto start = capture_start_location();
     auto stmt = std::make_unique<ReturnStatement>();
 
     if (check(TokenType::Semicolon) || current_token().preceded_by_line_terminator || check(TokenType::EndOfFile)) {
         consume_semicolon_if_present();
+        set_node_location(stmt.get(), start);
         return stmt;
     }
 
     stmt->argument = parse_expression_impl();
     consume_semicolon_if_present();
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_break_statement() {
+    auto start = capture_start_location();
     auto stmt = std::make_unique<BreakStatement>();
     if (!current_token().preceded_by_line_terminator && check(TokenType::Identifier)) {
         stmt->label = current_token().value;
         advance();
     }
     consume_semicolon_if_present();
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_continue_statement() {
+    auto start = capture_start_location();
     auto stmt = std::make_unique<ContinueStatement>();
     if (!current_token().preceded_by_line_terminator && check(TokenType::Identifier)) {
         stmt->label = current_token().value;
         advance();
     }
     consume_semicolon_if_present();
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_if_statement() {
+    auto start = capture_start_location();
     expect(TokenType::OpenParen, "Expected '(' after if"_s);
     auto test = parse_expression_impl();
     expect(TokenType::CloseParen, "Expected ')' after condition"_s);
@@ -462,10 +511,12 @@ StatementPtr Parser::parse_if_statement() {
     stmt->test = std::move(test);
     stmt->consequent = std::move(consequent);
     stmt->alternate = std::move(alternate);
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_while_statement() {
+    auto start = capture_start_location();
     expect(TokenType::OpenParen, "Expected '(' after while"_s);
     auto test = parse_expression_impl();
     expect(TokenType::CloseParen, "Expected ')' after condition"_s);
@@ -474,10 +525,12 @@ StatementPtr Parser::parse_while_statement() {
     auto stmt = std::make_unique<WhileStatement>();
     stmt->test = std::move(test);
     stmt->body = std::move(body);
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_do_while_statement() {
+    auto start = capture_start_location();
     auto stmt = std::make_unique<DoWhileStatement>();
     stmt->body = parse_statement();
     expect(TokenType::While, "Expected 'while' after do-while body"_s);
@@ -485,15 +538,72 @@ StatementPtr Parser::parse_do_while_statement() {
     stmt->test = parse_expression_impl();
     expect(TokenType::CloseParen, "Expected ')' after condition"_s);
     consume_semicolon_if_present();
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_for_statement() {
+    auto start = capture_start_location();
     expect(TokenType::OpenParen, "Expected '(' after for"_s);
+
+    // 尝试解析 for...in 循环: for (var/let/const identifier in expression)
+    // 使用回溯来判断是否是 for...in 模式
+    auto saved_state = m_lexer.save_state();
+    Token saved_current = m_current;
+    Token saved_previous = m_previous;
+
+    // 检查是否匹配 for...in 模式
+    bool is_for_in = false;
+    bool use_var = false, use_let = false, use_const = false;
+    String for_in_variable;
+
+    if (match(TokenType::Var)) {
+        use_var = true;
+    } else if (match(TokenType::Let)) {
+        use_let = true;
+    } else if (match(TokenType::Const)) {
+        use_const = true;
+    }
+
+    if (use_var || use_let || use_const) {
+        // 检查后面是否是 "identifier in"
+        if (check(TokenType::Identifier)) {
+            for_in_variable = m_current.value;
+            advance();
+
+            if (check(TokenType::In)) {
+                // 确认是 for...in
+                is_for_in = true;
+            }
+        }
+    }
+
+    if (is_for_in) {
+        // 解析 for...in 循环
+        advance();  // 消费 'in'
+
+        auto for_in = std::make_unique<ForInStatement>();
+        for_in->variable = for_in_variable;
+        for_in->use_let = use_let;
+        for_in->use_const = use_const;
+        for_in->object = parse_expression_impl();
+
+        expect(TokenType::CloseParen, "Expected ')' after for-in"_s);
+        for_in->body = parse_statement();
+        set_node_location(for_in.get(), start);
+        return for_in;
+    }
+
+    // 不是 for...in，回退并按标准 for 循环解析
+    m_lexer.restore_state(saved_state);
+    m_current = saved_current;
+    m_previous = saved_previous;
+
     auto stmt = std::make_unique<ForStatement>();
 
-    // init
+    // init - 标准 for 循环
     if (match(TokenType::Semicolon)) {
+        // 空初始化
     } else if (match(TokenType::Var)) {
         stmt->init_statement = parse_variable_statement(VariableDeclaration::Kind::Var);
     } else if (match(TokenType::Let)) {
@@ -518,10 +628,12 @@ StatementPtr Parser::parse_for_statement() {
     expect(TokenType::CloseParen, "Expected ')' after for clauses"_s);
 
     stmt->body = parse_statement();
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_switch_statement() {
+    auto start = capture_start_location();
     expect(TokenType::OpenParen, "Expected '(' after switch"_s);
     auto discriminant = parse_expression_impl();
     expect(TokenType::CloseParen, "Expected ')' after discriminant"_s);
@@ -550,10 +662,12 @@ StatementPtr Parser::parse_switch_statement() {
     }
 
     expect(TokenType::CloseBrace, "Expected '}' after switch"_s);
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_try_statement() {
+    auto start = capture_start_location();
     auto stmt = std::make_unique<TryStatement>();
     expect(TokenType::OpenBrace, "Expected '{' after try"_s);
     stmt->block = parse_block_statement();
@@ -576,34 +690,42 @@ StatementPtr Parser::parse_try_statement() {
         error("Expected catch or finally after try"_s);
     }
 
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_throw_statement() {
+    auto start = capture_start_location();
     auto stmt = std::make_unique<ThrowStatement>();
     if (current_token().preceded_by_line_terminator) {
         error("Illegal newline after throw"_s);
+        set_node_location(stmt.get(), start);
         return stmt;
     }
     stmt->argument = parse_expression_impl();
     consume_semicolon_if_present();
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_with_statement() {
+    auto start = capture_start_location();
     auto stmt = std::make_unique<WithStatement>();
     expect(TokenType::OpenParen, "Expected '(' after with"_s);
     stmt->object = parse_expression_impl();
     expect(TokenType::CloseParen, "Expected ')' after with object"_s);
     stmt->body = parse_statement();
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
 StatementPtr Parser::parse_expression_statement() {
+    auto start = capture_start_location();
     auto expr = parse_expression_impl();
     consume_semicolon_if_present();
     auto stmt = std::make_unique<ExpressionStatement>();
     stmt->expression = std::move(expr);
+    set_node_location(stmt.get(), start);
     return stmt;
 }
 
@@ -616,6 +738,7 @@ ExpressionPtr Parser::parse_expression_impl() {
 }
 
 ExpressionPtr Parser::parse_assignment_expression() {
+    auto start = capture_start_location();
     auto left = parse_conditional_expression();
 
     if (is_assignment_operator(current_token().type)) {
@@ -627,6 +750,7 @@ ExpressionPtr Parser::parse_assignment_expression() {
         assign->op = op;
         assign->left = std::move(left);
         assign->right = std::move(right);
+        set_node_location(assign.get(), start);
         return assign;
     }
 
@@ -634,6 +758,7 @@ ExpressionPtr Parser::parse_assignment_expression() {
 }
 
 ExpressionPtr Parser::parse_conditional_expression() {
+    auto start = capture_start_location();
     auto expr = parse_logical_or_expression();
     if (match(TokenType::Question)) {
         auto consequent = parse_assignment_expression();
@@ -643,12 +768,14 @@ ExpressionPtr Parser::parse_conditional_expression() {
         conditional->test = std::move(expr);
         conditional->consequent = std::move(consequent);
         conditional->alternate = std::move(alternate);
+        set_node_location(conditional.get(), start);
         return conditional;
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_logical_or_expression() {
+    auto start = capture_start_location();
     auto expr = parse_logical_and_expression();
 
     while (match(TokenType::PipePipe)) {
@@ -663,12 +790,14 @@ ExpressionPtr Parser::parse_logical_or_expression() {
         logical->op = LogicalExpression::Operator::Or;
         logical->left = std::move(expr);
         logical->right = std::move(right);
+        set_node_location(logical.get(), start);
         expr = std::move(logical);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_logical_and_expression() {
+    auto start = capture_start_location();
     auto expr = parse_nullish_expression();
 
     while (match(TokenType::AmpersandAmpersand)) {
@@ -683,12 +812,14 @@ ExpressionPtr Parser::parse_logical_and_expression() {
         logical->op = LogicalExpression::Operator::And;
         logical->left = std::move(expr);
         logical->right = std::move(right);
+        set_node_location(logical.get(), start);
         expr = std::move(logical);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_nullish_expression() {
+    auto start = capture_start_location();
     auto expr = parse_bitwise_or_expression();
 
     while (match(TokenType::QuestionQuestion)) {
@@ -697,12 +828,14 @@ ExpressionPtr Parser::parse_nullish_expression() {
         logical->op = LogicalExpression::Operator::NullishCoalescing;
         logical->left = std::move(expr);
         logical->right = std::move(right);
+        set_node_location(logical.get(), start);
         expr = std::move(logical);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_bitwise_or_expression() {
+    auto start = capture_start_location();
     auto expr = parse_bitwise_xor_expression();
 
     while (match(TokenType::Pipe)) {
@@ -711,12 +844,14 @@ ExpressionPtr Parser::parse_bitwise_or_expression() {
         binary->op = BinaryExpression::Operator::BitwiseOr;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         expr = std::move(binary);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_bitwise_xor_expression() {
+    auto start = capture_start_location();
     auto expr = parse_bitwise_and_expression();
 
     while (match(TokenType::Caret)) {
@@ -725,12 +860,14 @@ ExpressionPtr Parser::parse_bitwise_xor_expression() {
         binary->op = BinaryExpression::Operator::BitwiseXor;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         expr = std::move(binary);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_bitwise_and_expression() {
+    auto start = capture_start_location();
     auto expr = parse_equality_expression();
 
     while (match(TokenType::Ampersand)) {
@@ -739,12 +876,14 @@ ExpressionPtr Parser::parse_bitwise_and_expression() {
         binary->op = BinaryExpression::Operator::BitwiseAnd;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         expr = std::move(binary);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_equality_expression() {
+    auto start = capture_start_location();
     auto expr = parse_relational_expression();
 
     while (true) {
@@ -761,12 +900,14 @@ ExpressionPtr Parser::parse_equality_expression() {
         binary->op = *op;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         expr = std::move(binary);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_relational_expression(bool allow_in) {
+    auto start = capture_start_location();
     auto expr = parse_shift_expression(allow_in);
 
     while (true) {
@@ -786,12 +927,14 @@ ExpressionPtr Parser::parse_relational_expression(bool allow_in) {
         binary->op = *op;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         expr = std::move(binary);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_shift_expression(bool allow_in) {
+    auto start = capture_start_location();
     auto expr = parse_additive_expression();
 
     while (true) {
@@ -807,12 +950,14 @@ ExpressionPtr Parser::parse_shift_expression(bool allow_in) {
         binary->op = *op;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         expr = std::move(binary);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_additive_expression() {
+    auto start = capture_start_location();
     auto expr = parse_multiplicative_expression();
 
     while (true) {
@@ -826,12 +971,14 @@ ExpressionPtr Parser::parse_additive_expression() {
         binary->op = *op;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         expr = std::move(binary);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_multiplicative_expression() {
+    auto start = capture_start_location();
     auto expr = parse_exponentiation_expression();
 
     while (true) {
@@ -847,12 +994,14 @@ ExpressionPtr Parser::parse_multiplicative_expression() {
         binary->op = *op;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         expr = std::move(binary);
     }
     return expr;
 }
 
 ExpressionPtr Parser::parse_exponentiation_expression() {
+    auto start = capture_start_location();
     auto expr = parse_unary_expression();
     if (match(TokenType::StarStar)) {
         auto right = parse_exponentiation_expression();
@@ -860,6 +1009,7 @@ ExpressionPtr Parser::parse_exponentiation_expression() {
         binary->op = BinaryExpression::Operator::Exponent;
         binary->left = std::move(expr);
         binary->right = std::move(right);
+        set_node_location(binary.get(), start);
         return binary;
     }
     return expr;
@@ -867,65 +1017,85 @@ ExpressionPtr Parser::parse_exponentiation_expression() {
 
 ExpressionPtr Parser::parse_unary_expression() {
     if (match(TokenType::Exclamation)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<UnaryExpression>();
         expr->op = UnaryExpression::Operator::Not;
         expr->argument = parse_unary_expression();
+        set_node_location(expr.get(), start);
         return expr;
     }
     if (match(TokenType::Minus)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<UnaryExpression>();
         expr->op = UnaryExpression::Operator::Minus;
         expr->argument = parse_unary_expression();
+        set_node_location(expr.get(), start);
         return expr;
     }
     if (match(TokenType::Plus)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<UnaryExpression>();
         expr->op = UnaryExpression::Operator::Plus;
         expr->argument = parse_unary_expression();
+        set_node_location(expr.get(), start);
         return expr;
     }
     if (match(TokenType::Typeof)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<UnaryExpression>();
         expr->op = UnaryExpression::Operator::Typeof;
         expr->argument = parse_unary_expression();
+        set_node_location(expr.get(), start);
         return expr;
     }
     if (match(TokenType::Void)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<UnaryExpression>();
         expr->op = UnaryExpression::Operator::Void;
         expr->argument = parse_unary_expression();
+        set_node_location(expr.get(), start);
         return expr;
     }
     if (match(TokenType::Delete)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<UnaryExpression>();
         expr->op = UnaryExpression::Operator::Delete;
         expr->argument = parse_unary_expression();
+        set_node_location(expr.get(), start);
         return expr;
     }
     if (match(TokenType::Await)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<UnaryExpression>();
         expr->op = UnaryExpression::Operator::Await;
         expr->argument = parse_unary_expression();
+        set_node_location(expr.get(), start);
         return expr;
     }
     if (match(TokenType::Tilde)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<UnaryExpression>();
         expr->op = UnaryExpression::Operator::BitwiseNot;
         expr->argument = parse_unary_expression();
+        set_node_location(expr.get(), start);
         return expr;
     }
     if (match(TokenType::PlusPlus)) {
+        auto start = capture_start_location();
         auto update = std::make_unique<UpdateExpression>();
         update->op = UpdateExpression::Operator::Increment;
         update->prefix = true;
         update->argument = parse_unary_expression();
+        set_node_location(update.get(), start);
         return update;
     }
     if (match(TokenType::MinusMinus)) {
+        auto start = capture_start_location();
         auto update = std::make_unique<UpdateExpression>();
         update->op = UpdateExpression::Operator::Decrement;
         update->prefix = true;
         update->argument = parse_unary_expression();
+        set_node_location(update.get(), start);
         return update;
     }
 
@@ -933,12 +1103,14 @@ ExpressionPtr Parser::parse_unary_expression() {
 }
 
 ExpressionPtr Parser::parse_update_expression() {
+    auto start = capture_start_location();
     auto expr = parse_new_expression();
     if (!current_token().preceded_by_line_terminator && match(TokenType::PlusPlus)) {
         auto update = std::make_unique<UpdateExpression>();
         update->op = UpdateExpression::Operator::Increment;
         update->argument = std::move(expr);
         update->prefix = false;
+        set_node_location(update.get(), start);
         return update;
     }
     if (!current_token().preceded_by_line_terminator && match(TokenType::MinusMinus)) {
@@ -946,6 +1118,7 @@ ExpressionPtr Parser::parse_update_expression() {
         update->op = UpdateExpression::Operator::Decrement;
         update->argument = std::move(expr);
         update->prefix = false;
+        set_node_location(update.get(), start);
         return update;
     }
     return expr;
@@ -953,6 +1126,7 @@ ExpressionPtr Parser::parse_update_expression() {
 
 ExpressionPtr Parser::parse_new_expression() {
     if (match(TokenType::New)) {
+        auto start = capture_start_location();
         auto expr = std::make_unique<NewExpression>();
         expr->callee = parse_member_expression();  // Parse member expression, not recursive new
         if (match(TokenType::OpenParen)) {
@@ -963,12 +1137,14 @@ ExpressionPtr Parser::parse_new_expression() {
             }
             expect(TokenType::CloseParen, "Expected ')' after arguments"_s);
         }
+        set_node_location(expr.get(), start);
         return expr;
     }
     return parse_call_member_expression();
 }
 
 ExpressionPtr Parser::parse_member_expression() {
+    auto start = capture_start_location();
     auto expr = parse_primary_expression();
 
     while (true) {
@@ -984,6 +1160,7 @@ ExpressionPtr Parser::parse_member_expression() {
                 member->property = std::move(property);
                 member->computed = true;
                 member->optional = true;
+                set_node_location(member.get(), start);
                 expr = std::move(member);
             } else {
                 Token prop = expect(TokenType::Identifier, "Expected property name after '?.'"_s);
@@ -991,9 +1168,12 @@ ExpressionPtr Parser::parse_member_expression() {
                 member->object = std::move(expr);
                 member->computed = false;
                 member->optional = true;
+                auto prop_start = capture_start_location();
                 auto id = std::make_unique<Identifier>();
                 id->name = prop.value;
+                set_node_location(id.get(), prop_start);
                 member->property = std::move(id);
+                set_node_location(member.get(), start);
                 expr = std::move(member);
             }
         } else if (match(TokenType::Dot)) {
@@ -1001,9 +1181,12 @@ ExpressionPtr Parser::parse_member_expression() {
             auto member = std::make_unique<MemberExpression>();
             member->object = std::move(expr);
             member->computed = false;
+            auto prop_start = capture_start_location();
             auto id = std::make_unique<Identifier>();
             id->name = prop.value;
+            set_node_location(id.get(), prop_start);
             member->property = std::move(id);
+            set_node_location(member.get(), start);
             expr = std::move(member);
         } else if (match(TokenType::OpenBracket)) {
             auto property = parse_expression_impl();
@@ -1012,6 +1195,7 @@ ExpressionPtr Parser::parse_member_expression() {
             member->object = std::move(expr);
             member->property = std::move(property);
             member->computed = true;
+            set_node_location(member.get(), start);
             expr = std::move(member);
         } else {
             break;
@@ -1022,6 +1206,7 @@ ExpressionPtr Parser::parse_member_expression() {
 }
 
 ExpressionPtr Parser::parse_call_member_expression() {
+    auto start = capture_start_location();
     // Arrow function with single identifier parameter
     if (check(TokenType::Identifier)) {
         Token ident = current_token();
@@ -1050,6 +1235,7 @@ ExpressionPtr Parser::parse_call_member_expression() {
                     } while (match(TokenType::Comma));
                 }
                 expect(TokenType::CloseParen, "Expected ')' after arguments"_s);
+                set_node_location(call.get(), start);
                 expr = std::move(call);
             } else {
                 // Member access was already handled by parse_member_expression
@@ -1064,6 +1250,7 @@ ExpressionPtr Parser::parse_call_member_expression() {
                 } while (match(TokenType::Comma));
             }
             expect(TokenType::CloseParen, "Expected ')' after arguments"_s);
+            set_node_location(call.get(), start);
             expr = std::move(call);
         } else {
             break;
@@ -1074,6 +1261,7 @@ ExpressionPtr Parser::parse_call_member_expression() {
 }
 
 ExpressionPtr Parser::parse_template_literal(const Token& head) {
+    auto start = capture_start_location();
     auto literal = std::make_unique<TemplateLiteral>();
     TemplateElement head_elem;
     head_elem.value = head.value;
@@ -1105,46 +1293,65 @@ ExpressionPtr Parser::parse_template_literal(const Token& head) {
         error("Unterminated template literal"_s);
         break;
     }
+    set_node_location(literal.get(), start);
     return literal;
 }
 
 ExpressionPtr Parser::parse_primary_expression() {
     if (match(TokenType::Null)) {
-        return std::make_unique<NullLiteral>();
+        auto start = capture_start_location();
+        auto lit = std::make_unique<NullLiteral>();
+        set_node_location(lit.get(), start);
+        return lit;
     }
     if (match(TokenType::True)) {
+        auto start = capture_start_location();
         auto lit = std::make_unique<BooleanLiteral>();
         lit->value = true;
+        set_node_location(lit.get(), start);
         return lit;
     }
     if (match(TokenType::False)) {
+        auto start = capture_start_location();
         auto lit = std::make_unique<BooleanLiteral>();
         lit->value = false;
+        set_node_location(lit.get(), start);
         return lit;
     }
     if (match(TokenType::Number)) {
+        auto start = capture_start_location();
         auto lit = std::make_unique<NumericLiteral>();
         lit->value = m_previous.number_value;
+        set_node_location(lit.get(), start);
         return lit;
     }
     if (match(TokenType::String)) {
+        auto start = capture_start_location();
         auto lit = std::make_unique<StringLiteral>();
         lit->value = m_previous.value;
+        set_node_location(lit.get(), start);
         return lit;
     }
     if (match(TokenType::RegExp)) {
+        auto start = capture_start_location();
         auto lit = std::make_unique<RegExpLiteral>();
         lit->pattern = m_previous.value;
         lit->flags = m_previous.regex_flags;
+        set_node_location(lit.get(), start);
         return lit;
     }
     if (match(TokenType::Identifier)) {
+        auto start = capture_start_location();
         auto id = std::make_unique<Identifier>();
         id->name = m_previous.value;
+        set_node_location(id.get(), start);
         return id;
     }
     if (match(TokenType::This)) {
-        return std::make_unique<ThisExpression>();
+        auto start = capture_start_location();
+        auto expr = std::make_unique<ThisExpression>();
+        set_node_location(expr.get(), start);
+        return expr;
     }
     if (match(TokenType::OpenParen)) {
         auto expr = parse_expression_impl();
@@ -1164,16 +1371,21 @@ ExpressionPtr Parser::parse_primary_expression() {
         return parse_template_literal(m_previous);
     }
     if (match(TokenType::NoSubstitutionTemplate)) {
+        auto start = capture_start_location();
         auto lit = std::make_unique<TemplateLiteral>();
         TemplateElement elem;
         elem.value = m_previous.value;
         elem.tail = true;
         lit->quasis.push_back(elem);
+        set_node_location(lit.get(), start);
         return lit;
     }
 
     error("Unexpected token in expression"_s);
-    return std::make_unique<NullLiteral>();
+    auto start = capture_start_location();
+    auto lit = std::make_unique<NullLiteral>();
+    set_node_location(lit.get(), start);
+    return lit;
 }
 
 // ============================================================================
@@ -1357,13 +1569,16 @@ bool Parser::allows_regexp_after(const Token& token) const {
 }
 
 ExpressionPtr Parser::parse_array_expression() {
+    auto start = capture_start_location();
     auto arr = std::make_unique<ArrayExpression>();
     if (!check(TokenType::CloseBracket)) {
         do {
             if (check(TokenType::CloseBracket)) break;
             if (match(TokenType::Ellipsis)) {
+                auto spread_start = capture_start_location();
                 auto spread = std::make_unique<SpreadElement>();
                 spread->argument = parse_assignment_expression();
+                set_node_location(spread.get(), spread_start);
                 arr->elements.push_back(std::move(spread));
             } else {
                 arr->elements.push_back(parse_assignment_expression());
@@ -1371,10 +1586,12 @@ ExpressionPtr Parser::parse_array_expression() {
         } while (match(TokenType::Comma));
     }
     expect(TokenType::CloseBracket, "Expected ']' after array literal"_s);
+    set_node_location(arr.get(), start);
     return arr;
 }
 
 ExpressionPtr Parser::parse_object_expression() {
+    auto start = capture_start_location();
     auto obj = std::make_unique<ObjectExpression>();
     if (!check(TokenType::CloseBrace)) {
         do {
@@ -1424,10 +1641,12 @@ ExpressionPtr Parser::parse_object_expression() {
         } while (match(TokenType::Comma));
     }
     expect(TokenType::CloseBrace, "Expected '}' after object literal"_s);
+    set_node_location(obj.get(), start);
     return obj;
 }
 
 ExpressionPtr Parser::parse_function_expression(bool is_arrow, std::vector<String> params) {
+    auto start = capture_start_location();
     auto func = std::make_unique<FunctionExpression>();
     func->is_arrow = is_arrow;
 
@@ -1453,10 +1672,12 @@ ExpressionPtr Parser::parse_function_expression(bool is_arrow, std::vector<Strin
         func->body.push_back(parse_statement());
     }
     expect(TokenType::CloseBrace, "Expected '}' after function body"_s);
+    set_node_location(func.get(), start);
     return func;
 }
 
 ExpressionPtr Parser::parse_arrow_function_after_params(std::vector<String> params, bool /*single_param*/) {
+    auto start = capture_start_location();
     auto func = std::make_unique<FunctionExpression>();
     func->is_arrow = true;
     func->params = std::move(params);
@@ -1470,6 +1691,7 @@ ExpressionPtr Parser::parse_arrow_function_after_params(std::vector<String> para
         func->expression_body = true;
         func->concise_body = parse_assignment_expression();
     }
+    set_node_location(func.get(), start);
     return func;
 }
 

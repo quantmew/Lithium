@@ -4,6 +4,7 @@
 #include "lithium/js/object.hpp"
 #include "lithium/js/value.hpp"
 #include "lithium/js/diagnostic.hpp"
+#include "lithium/js/gc.hpp"
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -12,12 +13,15 @@ namespace lithium::js {
 
 class Compiler;
 struct VMFunctionObject;
+class GarbageCollector;
 
 // ============================================================================
 // VM - Bytecode interpreter
 // ============================================================================
 
     class VM {
+        friend class GarbageCollector;  // GC needs access to mark_roots()
+
     public:
         VM();
 
@@ -27,12 +31,16 @@ struct VMFunctionObject;
         RuntimeError
     };
 
-    [[nodiscard]] InterpretResult interpret(const String& source);
+    [[nodiscard]] InterpretResult interpret(const String& source, const String& filename = "<script>"_s);
     [[nodiscard]] const String& error_message() const { return m_error_message; }
     [[nodiscard]] const Value& last_value() const { return m_last_value; }
     [[nodiscard]] const std::vector<Diagnostic>& diagnostics() const { return m_diagnostics.diagnostics(); }
 
     void define_native(const String& name, NativeFn fn, u8 arity = 0);
+    void set_global(const String& name, const Value& value, bool is_const = true);
+
+    // GC access
+    [[nodiscard]] GarbageCollector& gc() { return m_gc; }
 
 private:
     struct Binding {
@@ -112,9 +120,16 @@ public:
 
     // Error handling
     void runtime_error(const String& message);
+    void runtime_error(ErrorType error_type, const String& message, usize line = 0, usize column = 0);
 
     void init_builtins();
     void install_global(const String& name, const Value& value, bool is_const = true);
+
+    // GC support - mark all roots for garbage collection
+    void mark_roots(GarbageCollector& gc);
+
+    // Garbage collector
+    GarbageCollector m_gc;
 
     ModuleBytecode m_module;
     std::vector<CallFrame> m_frames;
@@ -132,6 +147,10 @@ public:
 
     Value m_last_value;
     String m_error_message;
+
+    // Source code storage for error reporting
+    String m_source_code;
+    String m_source_file;
 };
 
 } // namespace lithium::js

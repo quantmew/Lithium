@@ -101,6 +101,10 @@ private:
     ExpressionPtr parse_function_expression(bool is_arrow = false, std::vector<String> params = {});
     ExpressionPtr parse_arrow_function_after_params(std::vector<String> params, bool single_param);
 
+    // Location tracking helpers
+    [[nodiscard]] SourceLocation capture_start_location() const;
+    void set_node_location(ASTNode* node, const SourceLocation& start);
+
     Lexer m_lexer;
     Token m_current;
     Token m_previous;

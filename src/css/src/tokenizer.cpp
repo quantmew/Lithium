@@ -498,46 +498,45 @@ std::pair<f64, bool> Tokenizer::consume_number() {
     StringBuilder repr;
     bool is_integer = true;
 
-    // Sign
+    // sign
     if (peek() == '+' || peek() == '-') {
         repr.append(consume());
     }
 
-    // Integer part
+    // digits before decimal
     while (!at_end() && std::isdigit(peek())) {
         repr.append(consume());
     }
 
-    // Fractional part
-    if (peek() == '.' && m_position + 1 < m_input.length() && std::isdigit(m_input[m_position + 1])) {
-        repr.append(consume()); // .
+    // fractional part
+    if (!at_end() && peek() == '.' && std::isdigit(peek(1))) {
         is_integer = false;
+        repr.append(consume()); // .
         while (!at_end() && std::isdigit(peek())) {
             repr.append(consume());
         }
     }
 
-    // Exponent part
-    if (peek() == 'e' || peek() == 'E') {
-        usize saved_pos = m_position;
-        repr.append(consume());
+    // exponent part
+    if (!at_end() && (peek() == 'e' || peek() == 'E')) {
+        bool valid_exponent = false;
+        unicode::CodePoint next = peek(1);
+        unicode::CodePoint next2 = peek(2);
 
-        if (peek() == '+' || peek() == '-') {
-            repr.append(consume());
+        if (std::isdigit(next)) {
+            valid_exponent = true;
+        } else if ((next == '+' || next == '-') && std::isdigit(next2)) {
+            valid_exponent = true;
         }
 
-        if (!at_end() && std::isdigit(peek())) {
+        if (valid_exponent) {
             is_integer = false;
-            while (!at_end() && std::isdigit(peek())) {
+            repr.append(consume()); // e/E
+            if (peek() == '+' || peek() == '-') {
                 repr.append(consume());
             }
-        } else {
-            // Not a valid exponent, restore
-            m_position = saved_pos;
-            repr = StringBuilder();
-            // Re-parse without exponent
-            if (m_input[saved_pos - 1] == '+' || m_input[saved_pos - 1] == '-') {
-                // Hmm, simplify by just parsing the number as float
+            while (!at_end() && std::isdigit(peek())) {
+                repr.append(consume());
             }
         }
     }

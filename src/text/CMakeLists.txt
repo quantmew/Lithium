@@ -16,5 +16,5 @@ lithium_add_module(text
 # Optional FreeType integration
 if(Freetype_FOUND)
     target_link_libraries(lithium_text PRIVATE Freetype::Freetype)
-    target_compile_definitions(lithium_text PRIVATE LITHIUM_USE_FREETYPE)
+    target_compile_definitions(lithium_text PRIVATE LITHIUM_HAS_FREETYPE)
 endif()

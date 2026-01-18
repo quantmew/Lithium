@@ -148,11 +148,17 @@ void Parser::parse_error(const String& message) {
     m_errors.push_back(message);
 }
 
-std::vector<Rule> Parser::consume_rule_list(bool top_level) {
+std::vector<Rule> Parser::consume_rule_list(bool top_level, bool stop_on_close_curly) {
     std::vector<Rule> rules;
 
     while (!at_end()) {
         const auto& token = current_token();
+
+        // When parsing inside a block, bail out once we see the closing brace.
+        if (stop_on_close_curly && std::holds_alternative<CloseCurlyToken>(token)) {
+            consume_token();
+            break;
+        }
 
         if (std::holds_alternative<WhitespaceToken>(token)) {
             consume_token();
@@ -175,14 +181,7 @@ std::vector<Rule> Parser::consume_rule_list(bool top_level) {
             continue;
         }
 
-        if (std::holds_alternative<AtKeywordToken>(token)) {
-            if (auto at_rule = consume_at_rule()) {
-                rules.push_back(*at_rule);
-            }
-            continue;
-        }
-
-        if (auto rule = consume_qualified_rule()) {
+        if (auto rule = consume_rule(top_level, stop_on_close_curly)) {
             rules.push_back(*rule);
         }
     }
@@ -190,12 +189,17 @@ std::vector<Rule> Parser::consume_rule_list(bool top_level) {
     return rules;
 }
 
-std::optional<Rule> Parser::consume_rule(bool top_level) {
+std::optional<Rule> Parser::consume_rule(bool top_level, bool stop_on_close_curly) {
     while (!at_end() && std::holds_alternative<WhitespaceToken>(current_token())) {
         consume_token();
     }
 
     if (at_end()) return std::nullopt;
+
+    if (stop_on_close_curly && std::holds_alternative<CloseCurlyToken>(current_token())) {
+        consume_token();
+        return std::nullopt;
+    }
 
     if (std::holds_alternative<AtKeywordToken>(current_token())) {
         return consume_at_rule();
@@ -209,6 +213,20 @@ std::optional<AtRule> Parser::consume_at_rule() {
     AtRule rule;
     rule.name = at_token.value;
     consume_token();
+
+    auto lower_name = rule.name.to_lowercase();
+    auto at_rule_allows_rule_list = [&](const String& name) {
+        return name == "media"_s ||
+               name == "supports"_s ||
+               name == "layer"_s ||
+               name == "container"_s ||
+               name == "scope"_s ||
+               name == "document"_s ||
+               name == "keyframes"_s ||
+               name == "-webkit-keyframes"_s ||
+               name == "-moz-keyframes"_s ||
+               name == "-o-keyframes"_s;
+    };
 
     // Consume prelude
     while (!at_end()) {
@@ -225,21 +243,19 @@ std::optional<AtRule> Parser::consume_at_rule() {
         }
 
         if (std::holds_alternative<OpenCurlyToken>(token)) {
-            // Consume block
-            consume_token();
-            rule.block = std::vector<std::shared_ptr<RuleVariant>>();
-            int depth = 1;
-            while (!at_end() && depth > 0) {
-                if (std::holds_alternative<OpenCurlyToken>(current_token())) {
-                    depth++;
-                } else if (std::holds_alternative<CloseCurlyToken>(current_token())) {
-                    depth--;
+            consume_token(); // consume {
+
+            if (at_rule_allows_rule_list(lower_name)) {
+                auto inner_rules = consume_rule_list(false, true);
+                std::vector<std::shared_ptr<RuleVariant>> nested;
+                nested.reserve(inner_rules.size());
+                for (auto& inner : inner_rules) {
+                    nested.push_back(std::make_shared<RuleVariant>(std::move(inner)));
                 }
-                if (depth > 0) {
-                    consume_token();
-                }
+                rule.nested_rules = std::move(nested);
+            } else {
+                rule.declarations = consume_declaration_block();
             }
-            if (!at_end()) consume_token(); // consume }
             return rule;
         }
 

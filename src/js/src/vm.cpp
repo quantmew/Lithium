@@ -210,12 +210,16 @@ void VM::install_global(const String& name, const Value& value, bool is_const) {
     m_global_env->define(name, value, is_const);
 }
 
+void VM::set_global(const String& name, const Value& value, bool is_const) {
+    install_global(name, value, is_const);
+}
+
 void VM::init_builtins() {
     // Object constructor
     define_native("Object"_s, [this](VM& vm, const std::vector<Value>& args) -> Value {
-        Value arg = args.empty() ? Value(std::make_shared<Object>()) : args[0];
+        Value arg = args.empty() ? Value(vm.m_gc.allocate<Object>()) : args[0];
         if (!arg.is_object()) {
-            arg = Value(std::make_shared<Object>());
+            arg = Value(vm.m_gc.allocate<Object>());
         }
         auto* obj = arg.as_object();
         if (obj && !obj->prototype()) {
@@ -225,8 +229,8 @@ void VM::init_builtins() {
     }, 1);
 
     // Array constructor
-    define_native("Array"_s, [this](VM&, const std::vector<Value>& args) -> Value {
-        auto arr = std::make_shared<Array>();
+    define_native("Array"_s, [this](VM& vm, const std::vector<Value>& args) -> Value {
+        auto arr = vm.m_gc.allocate<Array>();
         arr->set_prototype(m_array_prototype);
         for (const auto& v : args) {
             arr->push(v);
@@ -299,7 +303,7 @@ void VM::init_builtins() {
     };
 
     auto make_fn = [&](const String& nm, NativeFn fn, u8 arity) {
-        auto nf = std::make_shared<NativeFunction>(nm, fn, arity);
+        auto nf = m_gc.allocate<NativeFunction>(nm, fn, arity);
         nf->set_prototype(m_function_prototype);
         nf->set_property("length"_s, Value(static_cast<f64>(arity)));
         nf->set_property("name"_s, Value(nm));
@@ -321,7 +325,7 @@ void VM::init_builtins() {
     m_object_prototype->set_property("hasOwnProperty"_s, make_fn("hasOwnProperty"_s, has_own, 1));
 
     // Math object
-    auto math = std::make_shared<Object>();
+    auto math = m_gc.allocate<Object>();
     math->set_prototype(m_object_prototype);
     math->set_property("abs"_s, make_fn("abs"_s, [](VM&, const std::vector<Value>& args) -> Value {
         f64 v = args.empty() ? 0.0 : args[0].to_number();
@@ -362,7 +366,7 @@ void VM::init_builtins() {
     install_global("Math"_s, Value(math), true);
 
     // JSON object
-    auto json = std::make_shared<Object>();
+    auto json = m_gc.allocate<Object>();
     json->set_prototype(m_object_prototype);
     json->set_property("stringify"_s, make_fn("stringify"_s, [](VM&, const std::vector<Value>& args) -> Value {
         if (args.empty() || args[0].is_undefined()) {
@@ -373,12 +377,12 @@ void VM::init_builtins() {
     install_global("JSON"_s, Value(json), true);
 
     // Date object (minimal - time value and basic stringification)
-    auto date_proto = std::make_shared<DateObject>();
+    auto date_proto = m_gc.allocate<DateObject>();
     date_proto->set_prototype(m_object_prototype);
 
-    auto date_ctor = make_fn("Date"_s, [date_proto](VM&, const std::vector<Value>& args) -> Value {
+    auto date_ctor = make_fn("Date"_s, [this, date_proto](VM&, const std::vector<Value>& args) -> Value {
         f64 timestamp = args.empty() ? current_time_millis() : args[0].to_number();
-        auto date = std::make_shared<DateObject>(timestamp);
+        auto date = m_gc.allocate<DateObject>(timestamp);
         date->set_prototype(date_proto);
         return Value(date);
     }, 1);
@@ -419,6 +423,193 @@ void VM::init_builtins() {
     date_proto->set_property("constructor"_s, date_ctor);
     install_global("Date"_s, date_ctor, true);
 
+    // Map constructor and prototype
+    auto map_proto = m_gc.allocate<MapObject>();
+    map_proto->set_prototype(m_object_prototype);
+
+    auto map_ctor = make_fn("Map"_s, [this, map_proto](VM&, const std::vector<Value>&) -> Value {
+        auto map = m_gc.allocate<MapObject>();
+        map->set_prototype(map_proto);
+        return Value(map);
+    }, 0);
+
+    map_proto->set_property("set"_s, make_fn("set"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* map = receiver.as<MapObject>();
+        if (!map) return Value::undefined();
+        if (args.size() < 2) return receiver;
+        map->set(args[0], args[1]);
+        return receiver;
+    }, 2));
+
+    map_proto->set_property("get"_s, make_fn("get"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* map = receiver.as<MapObject>();
+        if (!map || args.empty()) return Value::undefined();
+        return map->get(args[0]);
+    }, 1));
+
+    map_proto->set_property("has"_s, make_fn("has"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* map = receiver.as<MapObject>();
+        if (!map || args.empty()) return Value(false);
+        return Value(map->has(args[0]));
+    }, 1));
+
+    map_proto->set_property("delete"_s, make_fn("delete"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* map = receiver.as<MapObject>();
+        if (!map || args.empty()) return Value(false);
+        return Value(map->remove(args[0]));
+    }, 1));
+
+    map_proto->set_property("clear"_s, make_fn("clear"_s, [](VM& vm, const std::vector<Value>&) -> Value {
+        auto receiver = vm.current_this();
+        auto* map = receiver.as<MapObject>();
+        if (map) map->clear();
+        return Value::undefined();
+    }, 0));
+
+    // Map.prototype.size getter
+    map_proto->set_property("size"_s, Value(0.0));  // Placeholder - will be overridden dynamically
+
+    if (auto* ctor_obj = map_ctor.as_object()) {
+        ctor_obj->set_property("prototype"_s, Value(map_proto));
+    }
+    map_proto->set_property("constructor"_s, map_ctor);
+    install_global("Map"_s, map_ctor, true);
+
+    // Set constructor and prototype
+    auto set_proto = m_gc.allocate<SetObject>();
+    set_proto->set_prototype(m_object_prototype);
+
+    auto set_ctor = make_fn("Set"_s, [this, set_proto](VM&, const std::vector<Value>&) -> Value {
+        auto set = m_gc.allocate<SetObject>();
+        set->set_prototype(set_proto);
+        return Value(set);
+    }, 0);
+
+    set_proto->set_property("add"_s, make_fn("add"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* set = receiver.as<SetObject>();
+        if (!set || args.empty()) return receiver;
+        set->add(args[0]);
+        return receiver;
+    }, 1));
+
+    set_proto->set_property("has"_s, make_fn("has"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* set = receiver.as<SetObject>();
+        if (!set || args.empty()) return Value(false);
+        return Value(set->has(args[0]));
+    }, 1));
+
+    set_proto->set_property("delete"_s, make_fn("delete"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* set = receiver.as<SetObject>();
+        if (!set || args.empty()) return Value(false);
+        return Value(set->remove(args[0]));
+    }, 1));
+
+    set_proto->set_property("clear"_s, make_fn("clear"_s, [](VM& vm, const std::vector<Value>&) -> Value {
+        auto receiver = vm.current_this();
+        auto* set = receiver.as<SetObject>();
+        if (set) set->clear();
+        return Value::undefined();
+    }, 0));
+
+    // Set.prototype.size getter
+    set_proto->set_property("size"_s, Value(0.0));  // Placeholder - will be overridden dynamically
+
+    if (auto* ctor_obj = set_ctor.as_object()) {
+        ctor_obj->set_property("prototype"_s, Value(set_proto));
+    }
+    set_proto->set_property("constructor"_s, set_ctor);
+    install_global("Set"_s, set_ctor, true);
+
+    // WeakMap constructor and prototype
+    auto weakmap_proto = m_gc.allocate<WeakMapObject>();
+    weakmap_proto->set_prototype(m_object_prototype);
+
+    auto weakmap_ctor = make_fn("WeakMap"_s, [this, weakmap_proto](VM&, const std::vector<Value>&) -> Value {
+        auto weakmap = m_gc.allocate<WeakMapObject>();
+        weakmap->set_prototype(weakmap_proto);
+        return Value(weakmap);
+    }, 0);
+
+    weakmap_proto->set_property("set"_s, make_fn("set"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* weakmap = receiver.as<WeakMapObject>();
+        if (!weakmap || args.size() < 2) return receiver;
+        weakmap->set(args[0], args[1]);
+        return receiver;
+    }, 2));
+
+    weakmap_proto->set_property("get"_s, make_fn("get"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* weakmap = receiver.as<WeakMapObject>();
+        if (!weakmap || args.empty()) return Value::undefined();
+        return weakmap->get(args[0]);
+    }, 1));
+
+    weakmap_proto->set_property("has"_s, make_fn("has"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* weakmap = receiver.as<WeakMapObject>();
+        if (!weakmap || args.empty()) return Value(false);
+        return Value(weakmap->has(args[0]));
+    }, 1));
+
+    weakmap_proto->set_property("delete"_s, make_fn("delete"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* weakmap = receiver.as<WeakMapObject>();
+        if (!weakmap || args.empty()) return Value(false);
+        return Value(weakmap->remove(args[0]));
+    }, 1));
+
+    if (auto* ctor_obj = weakmap_ctor.as_object()) {
+        ctor_obj->set_property("prototype"_s, Value(weakmap_proto));
+    }
+    weakmap_proto->set_property("constructor"_s, weakmap_ctor);
+    install_global("WeakMap"_s, weakmap_ctor, true);
+
+    // WeakSet constructor and prototype
+    auto weakset_proto = m_gc.allocate<WeakSetObject>();
+    weakset_proto->set_prototype(m_object_prototype);
+
+    auto weakset_ctor = make_fn("WeakSet"_s, [this, weakset_proto](VM&, const std::vector<Value>&) -> Value {
+        auto weakset = m_gc.allocate<WeakSetObject>();
+        weakset->set_prototype(weakset_proto);
+        return Value(weakset);
+    }, 0);
+
+    weakset_proto->set_property("add"_s, make_fn("add"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* weakset = receiver.as<WeakSetObject>();
+        if (!weakset || args.empty()) return receiver;
+        weakset->add(args[0]);
+        return receiver;
+    }, 1));
+
+    weakset_proto->set_property("has"_s, make_fn("has"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* weakset = receiver.as<WeakSetObject>();
+        if (!weakset || args.empty()) return Value(false);
+        return Value(weakset->has(args[0]));
+    }, 1));
+
+    weakset_proto->set_property("delete"_s, make_fn("delete"_s, [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* weakset = receiver.as<WeakSetObject>();
+        if (!weakset || args.empty()) return Value(false);
+        return Value(weakset->remove(args[0]));
+    }, 1));
+
+    if (auto* ctor_obj = weakset_ctor.as_object()) {
+        ctor_obj->set_property("prototype"_s, Value(weakset_proto));
+    }
+    weakset_proto->set_property("constructor"_s, weakset_ctor);
+    install_global("WeakSet"_s, weakset_ctor, true);
+
     // Basic globals
     install_global("globalThis"_s, Value(m_global_object), true);
 }
@@ -428,12 +619,13 @@ void VM::init_builtins() {
 // ============================================================================
 
 VM::VM() {
-    m_object_prototype = std::make_shared<Object>();
-    m_function_prototype = std::make_shared<Object>();
+    // Allocate prototype objects through GC
+    m_object_prototype = m_gc.allocate<Object>();
+    m_function_prototype = m_gc.allocate<Object>();
     m_function_prototype->set_prototype(m_object_prototype);
-    m_array_prototype = std::make_shared<Array>();
+    m_array_prototype = m_gc.allocate<Array>();
     m_array_prototype->set_prototype(m_object_prototype);
-    m_global_object = std::make_shared<Object>();
+    m_global_object = m_gc.allocate<Object>();
     m_global_object->set_prototype(m_object_prototype);
 
     m_global_env = std::make_shared<Environment>(nullptr, m_global_object);
@@ -442,7 +634,7 @@ VM::VM() {
 }
 
 void VM::define_native(const String& name, NativeFn fn, u8 arity) {
-    auto native_obj = std::make_shared<NativeFunction>(name, std::move(fn), arity);
+    auto native_obj = m_gc.allocate<NativeFunction>(name, std::move(fn), arity);
     native_obj->set_prototype(m_function_prototype);
     native_obj->set_property("length"_s, Value(static_cast<f64>(arity)));
     native_obj->set_property("name"_s, Value(name));
@@ -474,8 +666,11 @@ Value VM::read_constant(const CallFrame& frame, u16 idx) const {
     return frame.function->chunk.constants()[idx];
 }
 
-VM::InterpretResult VM::interpret(const String& source) {
+VM::InterpretResult VM::interpret(const String& source, const String& filename) {
     m_diagnostics.clear();
+    m_source_code = source;  // Store source code for error reporting
+    m_source_file = filename;  // File name for error reporting
+
     Parser parser;
     parser.set_diagnostics(&m_diagnostics);
     auto program = parser.parse(source);
@@ -504,6 +699,10 @@ VM::InterpretResult VM::interpret(const String& source) {
     m_frames.push_back(CallFrame{entry_fn, frame_env, frame_env, 0, 0, Value::undefined(), {}});
     m_frames.back().init_ic_cache();
 
+    // GC check counter (check every N instructions)
+    usize gc_check_counter = 0;
+    constexpr usize GC_CHECK_INTERVAL = 100;
+
     try {
 #if USE_COMPUTED_GOTO
         // ====================================================================
@@ -524,7 +723,7 @@ VM::InterpretResult VM::interpret(const String& source) {
             &&op_In, &&op_Typeof, &&op_Void, &&op_LogicalNot, &&op_Jump,
             &&op_JumpIfFalse, &&op_JumpIfNullish, &&op_Throw, &&op_PushHandler,
             &&op_PopHandler, &&op_MakeArray, &&op_ArrayPush, &&op_ArraySpread,
-            &&op_MakeObject, &&op_ObjectSpread, &&op_MakeFunction, &&op_Call,
+            &&op_MakeObject, &&op_ObjectSpread, &&op_GetOwnPropertyNames, &&op_MakeFunction, &&op_Call,
             &&op_New, &&op_NewStack, &&op_Return, &&op_This, &&op_EnterWith,
             &&op_ExitWith,
         };
@@ -561,6 +760,12 @@ VM::InterpretResult VM::interpret(const String& source) {
 
         #define VM_DISPATCH() do { \
             if (m_frames.empty()) goto vm_exit; \
+            if (++gc_check_counter >= GC_CHECK_INTERVAL) { \
+                gc_check_counter = 0; \
+                if (m_gc.should_collect()) { \
+                    m_gc.collect(*this); \
+                } \
+            } \
             frame_ptr = &m_frames.back(); \
             if (frame.ip >= frame.function->chunk.size()) \
                 throw RuntimeError("Instruction pointer out of range"_s); \
@@ -581,6 +786,14 @@ VM::InterpretResult VM::interpret(const String& source) {
         #define VM_NEXT() break
 
         while (!m_frames.empty()) {
+            // Periodic GC check
+            if (++gc_check_counter >= GC_CHECK_INTERVAL) {
+                gc_check_counter = 0;
+                if (m_gc.should_collect()) {
+                    m_gc.collect(*this);
+                }
+            }
+
             auto& frame = m_frames.back();
             if (frame.ip >= frame.function->chunk.size()) {
                 throw RuntimeError("Instruction pointer out of range"_s);
@@ -635,7 +848,7 @@ VM::InterpretResult VM::interpret(const String& source) {
                     auto name = read_constant(frame, name_idx).to_string();
                     auto binding = frame.env->get(name);
                     if (!binding) {
-                        runtime_error("Undefined variable: "_s + name);
+                        runtime_error(ErrorType::ReferenceError, name + " is not defined"_s);
                     }
                     push(binding->value);
                     VM_NEXT();
@@ -662,7 +875,7 @@ VM::InterpretResult VM::interpret(const String& source) {
                         const auto& name = frame.function->local_names[slot];
                         auto binding = frame.env->get(name);
                         if (!binding) {
-                            runtime_error("Undefined variable: "_s + name);
+                            runtime_error(ErrorType::ReferenceError, name + " is not defined"_s);
                         }
                         VM_PUSH(binding->value);
                     }
@@ -674,6 +887,13 @@ VM::InterpretResult VM::interpret(const String& source) {
                     Value val = VM_POP();
                     // Fast path: direct array access (most common case)
                     if (!frame.env->is_with_env()) {
+                        // Check if the local is const before assigning (allow initial assignment)
+                        bool is_const = slot < frame.lexical_env->m_local_is_const.size() &&
+                                       frame.lexical_env->m_local_is_const[slot];
+                        if (is_const && slot < frame.lexical_env->m_locals.size() &&
+                            !frame.lexical_env->m_locals[slot].is_undefined() && !val.is_undefined()) {
+                            runtime_error("Assignment to constant variable"_s);
+                        }
                         VM_SET_LOCAL_FAST(slot, val);
                     } else {
                         // Slow path: with-env requires name lookup
@@ -691,11 +911,11 @@ VM::InterpretResult VM::interpret(const String& source) {
                     auto name = read_constant(frame, name_idx).to_string();
                     Value obj = pop();
                     if (!obj.is_object()) {
-                        runtime_error("Cannot get property of non-object"_s);
+                        runtime_error(ErrorType::TypeError, "Cannot read properties of "_s + obj.debug_string());
                     }
                     Value prop = obj.as_object()->get_property(name);
                     if (prop.is_callable()) {
-                        prop = Value(std::make_shared<BoundFunction>(prop, obj));
+                        prop = Value(m_gc.allocate<BoundFunction>(prop, obj));
                     }
                     push(prop);
                     VM_NEXT();
@@ -721,13 +941,13 @@ VM::InterpretResult VM::interpret(const String& source) {
                     auto name = read_constant(frame, name_idx).to_string();
                     Value obj = pop();
                     if (!obj.is_object()) {
-                        runtime_error("Cannot get property of non-object"_s);
+                        runtime_error(ErrorType::TypeError, "Cannot read properties of "_s + obj.debug_string());
                     }
                     // Use inline cache for fast property access
                     InlineCacheEntry& cache = frame.ic_cache[cache_slot];
                     Value prop = obj.as_object()->get_property_cached(name, cache);
                     if (prop.is_callable()) {
-                        prop = Value(std::make_shared<BoundFunction>(prop, obj));
+                        prop = Value(m_gc.allocate<BoundFunction>(prop, obj));
                     }
                     push(prop);
                     VM_NEXT();
@@ -762,7 +982,7 @@ VM::InterpretResult VM::interpret(const String& source) {
                         prop = obj.as_object()->get_property(key.to_string());
                     }
                     if (prop.is_callable()) {
-                        prop = Value(std::make_shared<BoundFunction>(prop, obj));
+                        prop = Value(m_gc.allocate<BoundFunction>(prop, obj));
                     }
                     push(prop);
                     VM_NEXT();
@@ -1040,7 +1260,7 @@ VM::InterpretResult VM::interpret(const String& source) {
                 VM_CASE(MakeArray): {
                     u16 count = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
-                    auto arr = std::make_shared<Array>();
+                    auto arr = m_gc.allocate<Array>();
                     arr->set_prototype(m_array_prototype);
                     std::vector<Value> elems;
                     elems.reserve(count);
@@ -1083,7 +1303,7 @@ VM::InterpretResult VM::interpret(const String& source) {
                     VM_NEXT();
                 }
                 VM_CASE(MakeObject): {
-                    auto obj = std::make_shared<Object>();
+                    auto obj = m_gc.allocate<Object>();
                     obj->set_prototype(m_object_prototype);
                     push(Value(obj));
                     VM_NEXT();
@@ -1104,15 +1324,34 @@ VM::InterpretResult VM::interpret(const String& source) {
                     push(target);
                     VM_NEXT();
                 }
+                VM_CASE(GetOwnPropertyNames): {
+                    // 从栈顶获取对象，返回其所有可枚举属性名的数组
+                    Value obj_val = pop();
+                    auto arr = m_gc.allocate<Array>();
+                    arr->set_prototype(m_array_prototype);
+
+                    if (obj_val.is_object()) {
+                        auto* obj = obj_val.as_object();
+                        auto prop_names = obj->own_property_names();
+                        u32 index = 0;
+                        for (const auto& name : prop_names) {
+                            arr->set_element(index++, Value(name));
+                        }
+                    }
+                    // 如果不是对象（null, undefined, 原始值等），返回空数组
+
+                    push(Value(arr));
+                    VM_NEXT();
+                }
                 VM_CASE(MakeFunction): {
                     u16 func_idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     if (func_idx >= m_module.functions.size()) {
                         runtime_error("Invalid function index"_s);
                     }
-                    auto fn_obj = std::make_shared<VMFunctionObject>(m_module.functions[func_idx], frame.env);
+                    auto fn_obj = m_gc.allocate<VMFunctionObject>(m_module.functions[func_idx], frame.env);
                     fn_obj->set_prototype(m_function_prototype);
-                    auto proto_obj = std::make_shared<Object>();
+                    auto proto_obj = m_gc.allocate<Object>();
                     proto_obj->set_prototype(m_object_prototype);
                     proto_obj->set_property("constructor"_s, Value(fn_obj));
                     fn_obj->set_property("prototype"_s, Value(proto_obj));
@@ -1146,7 +1385,7 @@ VM::InterpretResult VM::interpret(const String& source) {
                     } else if (auto* func_obj = dynamic_cast<VMFunctionObject*>(callee.as_object())) {
                         call_function(func_obj, arg_count, receiver);
                     } else {
-                        runtime_error("Attempted to call a non-function"_s);
+                        runtime_error(ErrorType::TypeError, callee.debug_string() + " is not a function"_s);
                     }
                     VM_NEXT();
                 }
@@ -1161,7 +1400,7 @@ VM::InterpretResult VM::interpret(const String& source) {
                     }
                     // Create a new object with the constructor's prototype
                     // For NewStack, mark as stack-allocated for potential future pooling
-                    auto new_obj = std::make_shared<Object>();
+                    auto new_obj = m_gc.allocate<Object>();
                     if (use_stack_alloc) {
                         new_obj->set_stack_allocated(true);
                     }
@@ -1344,6 +1583,146 @@ Value VM::current_this() const {
 void VM::runtime_error(const String& message) {
     m_diagnostics.add(DiagnosticStage::Runtime, DiagnosticLevel::Error, message);
     throw RuntimeError(message);
+}
+
+void VM::runtime_error(ErrorType error_type, const String& message, usize line, usize column) {
+    // If no line/column provided, try to get from current call frame
+    if (line == 0 && !m_frames.empty()) {
+        const auto& frame = m_frames.back();
+        if (frame.function) {
+            // Get location from bytecode debug info
+            BytecodeLocation loc = frame.function->chunk.get_location(frame.ip);
+            if (loc.is_valid()) {
+                line = loc.line;
+                column = loc.column;
+            }
+        }
+    }
+
+    Diagnostic diag;
+    diag.stage = DiagnosticStage::Runtime;
+    diag.level = DiagnosticLevel::Error;
+    diag.error_type = error_type;
+    diag.message = message;
+    diag.file = m_source_file;
+    diag.line = line;
+    diag.column = column;
+
+    // Extract the source line if we have line information
+    if (line > 0 && !m_source_code.empty()) {
+        std::string_view src(m_source_code.c_str());
+        usize current_line = 1;
+        usize line_start = 0;
+
+        for (usize i = 0; i < src.length(); ++i) {
+            if (current_line == line) {
+                // Found the target line, find its end
+                usize line_end = i;
+                while (line_end < src.length() && src[line_end] != '\n') {
+                    line_end++;
+                }
+                diag.source_line = String(std::string(src.substr(i, line_end - i)));
+                break;
+            }
+            if (src[i] == '\n') {
+                current_line++;
+            }
+        }
+    }
+
+    // Build stack trace from call frames with accurate line numbers
+    for (const auto& frame : m_frames) {
+        if (frame.function) {
+            StackFrame sf;
+            sf.function_name = frame.function->name.empty() ? "<anonymous>"_s : frame.function->name;
+            sf.file = m_source_file;
+
+            // Get accurate location from bytecode debug info
+            BytecodeLocation loc = frame.function->chunk.get_location(frame.ip);
+            sf.line = loc.is_valid() ? loc.line : line;
+            sf.column = loc.is_valid() ? loc.column : column;
+
+            diag.stack_trace.push_back(std::move(sf));
+        }
+    }
+
+    m_diagnostics.add(std::move(diag));
+    m_error_message = message;
+    throw RuntimeError(message);
+}
+
+// ============================================================================
+// Garbage Collection Support
+// ============================================================================
+
+void VM::mark_roots(GarbageCollector& gc) {
+    // Mark all values on the stack
+    for (const auto& value : m_stack) {
+        gc.mark_value(value);
+    }
+
+    // Mark all call frames
+    for (const auto& frame : m_frames) {
+        // Mark receiver
+        gc.mark_value(frame.receiver);
+
+        // Mark environment (which will mark locals and parent environments)
+        if (frame.env) {
+            // Mark all local variables
+            for (const auto& [name, binding] : frame.env->m_values) {
+                gc.mark_value(binding.value);
+            }
+            for (const auto& local : frame.env->m_locals) {
+                gc.mark_value(local);
+            }
+            // Mark with-object if present
+            if (frame.env->m_with_object) {
+                gc.mark_value(frame.env->m_with_object.value());
+            }
+        }
+
+        // Mark lexical environment
+        if (frame.lexical_env && frame.lexical_env != frame.env) {
+            for (const auto& [name, binding] : frame.lexical_env->m_values) {
+                gc.mark_value(binding.value);
+            }
+            for (const auto& local : frame.lexical_env->m_locals) {
+                gc.mark_value(local);
+            }
+        }
+    }
+
+    // Mark global environment
+    if (m_global_env) {
+        for (const auto& [name, binding] : m_global_env->m_values) {
+            gc.mark_value(binding.value);
+        }
+        for (const auto& local : m_global_env->m_locals) {
+            gc.mark_value(local);
+        }
+    }
+
+    // Mark this stack
+    for (const auto& value : m_this_stack) {
+        gc.mark_value(value);
+    }
+
+    // Mark global objects
+    if (m_global_object) {
+        gc.mark_object(m_global_object.get());
+    }
+    if (m_object_prototype) {
+        gc.mark_object(m_object_prototype.get());
+    }
+    if (m_function_prototype) {
+        gc.mark_object(m_function_prototype.get());
+    }
+    if (m_array_prototype) {
+        gc.mark_object(m_array_prototype.get());
+    }
+
+    // Mark last value
+    gc.mark_value(m_last_value);
 }
 
 } // namespace lithium::js

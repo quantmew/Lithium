@@ -19,13 +19,34 @@ enum class DiagnosticLevel {
     Error,
 };
 
+// JavaScript error types (matching V8/ES spec)
+enum class ErrorType {
+    None,           // Not a runtime error
+    Error,          // Generic Error
+    SyntaxError,    // Syntax errors
+    ReferenceError, // Undefined variable access
+    TypeError,      // Type-related errors (calling non-function, etc.)
+    RangeError,     // Out of range errors
+    URIError,       // URI handling errors
+};
+
+struct StackFrame {
+    String function_name;
+    String file;
+    usize line{0};
+    usize column{0};
+};
+
 struct Diagnostic {
     DiagnosticStage stage{DiagnosticStage::VM};
     DiagnosticLevel level{DiagnosticLevel::Error};
+    ErrorType error_type{ErrorType::None};
     String message;
     String file;
     usize line{0};
     usize column{0};
+    String source_line;  // The actual line of source code
+    std::vector<StackFrame> stack_trace;
 };
 
 class DiagnosticSink {
@@ -35,10 +56,12 @@ public:
              String message,
              String file = ""_s,
              usize line = 0,
-             usize column = 0) {
+             usize column = 0,
+             ErrorType error_type = ErrorType::None) {
         Diagnostic d;
         d.stage = stage;
         d.level = level;
+        d.error_type = error_type;
         d.message = std::move(message);
         d.file = std::move(file);
         d.line = line;

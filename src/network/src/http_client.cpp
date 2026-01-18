@@ -136,7 +136,7 @@ HttpClient::~HttpClient() = default;
 
 Result<HttpResponse, String> HttpClient::send(const HttpRequest& request) {
     if (!m_impl->curl) {
-        return Result<HttpResponse, String>::error("CURL not initialized"_s);
+        return make_error("CURL not initialized"_s);
     }
 
     CURL* curl = m_impl->curl;
@@ -222,7 +222,7 @@ Result<HttpResponse, String> HttpClient::send(const HttpRequest& request) {
     }
 
     if (res != CURLE_OK) {
-        return Result<HttpResponse, String>::error(String(curl_easy_strerror(res)));
+        return make_error(String(curl_easy_strerror(res)));
     }
 
     // Get response info
@@ -240,7 +240,7 @@ Result<HttpResponse, String> HttpClient::send(const HttpRequest& request) {
         response.url = String(effective_url);
     }
 
-    return Result<HttpResponse, String>::ok(std::move(response));
+    return Result<HttpResponse, String>(std::move(response));
 }
 
 #else // No CURL

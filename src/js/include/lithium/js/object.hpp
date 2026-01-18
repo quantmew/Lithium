@@ -4,6 +4,7 @@
 #include "shape.hpp"
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace lithium::js {
 
@@ -98,6 +99,10 @@ public:
     virtual void set_element(u32 index, const Value& value);
     virtual bool delete_element(u32 index);
 
+    // Dynamic property support (for Map.size, Set.size, etc.)
+    [[nodiscard]] virtual bool has_dynamic_property(const String& name) const { (void)name; return false; }
+    [[nodiscard]] virtual Value get_dynamic_property(const String& name) const { (void)name; return Value::undefined(); }
+
     // Enumeration
     [[nodiscard]] virtual std::vector<String> own_property_names() const;
 
@@ -113,11 +118,14 @@ public:
     [[nodiscard]] bool is_stack_allocated() const { return m_stack_allocated; }
     void set_stack_allocated(bool val) { m_stack_allocated = val; }
 
-    // GC stubs (no-op)
+    // GC support - mark and trace for garbage collection
     virtual void mark() { m_marked = true; }
     void unmark() { m_marked = false; }
     [[nodiscard]] bool is_marked() const { return m_marked; }
-    virtual void trace();
+
+    // Trace object references - must be called with GC instance
+    // to properly mark nested objects and add them to gray stack
+    virtual void trace(class GarbageCollector& gc);
 
 protected:
     // Shape-based property storage
@@ -164,7 +172,7 @@ public:
     [[nodiscard]] Value receiver() const { return m_receiver; }
     [[nodiscard]] bool is_callable() const override { return true; }
 
-    void trace() override;
+    void trace(GarbageCollector& gc) override;
 
 private:
     Value m_target;
@@ -202,7 +210,7 @@ public:
     [[nodiscard]] Value get_property(const String& name) const override;
     void set_property(const String& name, const Value& value) override;
 
-    void trace() override;
+    void trace(GarbageCollector& gc) override;
 
 private:
     std::vector<Value> m_elements;
@@ -223,6 +231,115 @@ public:
 
 private:
     f64 m_time{0.0};
+};
+
+// ============================================================================
+// Map - ES6 Map implementation (key-value pairs with any value as key)
+// ============================================================================
+
+class MapObject : public Object {
+public:
+    MapObject();
+
+    struct Entry {
+        Value key;
+        Value value;
+    };
+
+    // Map operations
+    void set(const Value& key, const Value& value);
+    [[nodiscard]] Value get(const Value& key) const;
+    [[nodiscard]] bool has(const Value& key) const;
+    bool remove(const Value& key);
+    void clear();
+    [[nodiscard]] usize size() const { return m_entries.size(); }
+
+    // Iteration support - returns internal entries for JS iteration
+    [[nodiscard]] const std::vector<Entry>& internal_entries() const { return m_entries; }
+
+    // Dynamic property support for 'size'
+    [[nodiscard]] bool has_dynamic_property(const String& name) const override;
+    [[nodiscard]] Value get_dynamic_property(const String& name) const override;
+
+    void trace(GarbageCollector& gc) override;
+
+private:
+    std::vector<Entry> m_entries;
+
+    // Find entry index by key (using SameValueZero equality)
+    [[nodiscard]] std::optional<usize> find_entry(const Value& key) const;
+};
+
+// ============================================================================
+// Set - ES6 Set implementation (unique values)
+// ============================================================================
+
+class SetObject : public Object {
+public:
+    SetObject();
+
+    // Set operations
+    void add(const Value& value);
+    [[nodiscard]] bool has(const Value& value) const;
+    bool remove(const Value& value);
+    void clear();
+    [[nodiscard]] usize size() const { return m_values.size(); }
+
+    // Iteration support
+    [[nodiscard]] const std::vector<Value>& values() const { return m_values; }
+
+    // Dynamic property support for 'size'
+    [[nodiscard]] bool has_dynamic_property(const String& name) const override;
+    [[nodiscard]] Value get_dynamic_property(const String& name) const override;
+
+    void trace(GarbageCollector& gc) override;
+
+private:
+    std::vector<Value> m_values;
+
+    // Find value index (using SameValueZero equality)
+    [[nodiscard]] std::optional<usize> find_value(const Value& value) const;
+};
+
+// ============================================================================
+// WeakMap - ES6 WeakMap implementation (weak references to object keys)
+// ============================================================================
+
+class WeakMapObject : public Object {
+public:
+    WeakMapObject();
+
+    // WeakMap operations (keys must be objects)
+    void set(const Value& key, const Value& value);
+    [[nodiscard]] Value get(const Value& key) const;
+    [[nodiscard]] bool has(const Value& key) const;
+    bool remove(const Value& key);
+
+    void trace(GarbageCollector& gc) override;
+
+private:
+    // Use raw pointers for keys (weak references)
+    std::unordered_map<Object*, Value> m_entries;
+};
+
+// ============================================================================
+// WeakSet - ES6 WeakSet implementation (weak references to objects)
+// ============================================================================
+
+class WeakSetObject : public Object {
+public:
+    WeakSetObject();
+
+    // WeakSet operations (values must be objects)
+    void add(const Value& value);
+    [[nodiscard]] bool has(const Value& value) const;
+    bool remove(const Value& value);
+
+    void trace(GarbageCollector& gc) override;
+
+private:
+    // Use raw pointers (weak references)
+    std::unordered_set<Object*> m_values;
 };
 
 } // namespace lithium::js

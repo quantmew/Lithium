@@ -9,10 +9,11 @@ lithium_add_module(network
         include/lithium/network/resource_loader.hpp
     PUBLIC_DEPENDENCIES
         lithium_core
+        Threads::Threads
 )
 
 # Optional CURL integration
 if(CURL_FOUND)
     target_link_libraries(lithium_network PRIVATE CURL::libcurl)
-    target_compile_definitions(lithium_network PRIVATE LITHIUM_USE_CURL)
+    target_compile_definitions(lithium_network PRIVATE LITHIUM_HAS_CURL)
 endif()

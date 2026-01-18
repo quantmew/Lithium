@@ -16,6 +16,8 @@ class VM;
 // ============================================================================
 
 class GarbageCollector {
+    friend class VM;  // VM needs access to mark_roots()
+
 public:
     GarbageCollector();
     ~GarbageCollector();
@@ -44,7 +46,7 @@ public:
 
     // Check if GC should run
     [[nodiscard]] bool should_collect() const {
-        return m_bytes_allocated > m_next_gc;
+        return m_stress_gc || m_bytes_allocated > m_next_gc;
     }
 
     // Stress testing (GC on every allocation)
@@ -57,11 +59,13 @@ public:
     void push_root(const Value* value);
     void pop_root();
 
-private:
-    // Mark phase
-    void mark_roots(VM& vm);
+    // Mark phase - public so Object::trace() can use them
     void mark_value(const Value& value);
     void mark_object(Object* obj);
+
+private:
+    // Mark phase - internal methods
+    void mark_roots(VM& vm);
     void trace_references();
 
     // Sweep phase

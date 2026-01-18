@@ -87,4 +87,12 @@ private:
     platform::BitmapImage m_content;
 };
 
+// Convenience helpers
+void paint_display_list(platform::GraphicsContext& graphics,
+                        text::FontContext& fonts,
+                        const DisplayList& display_list);
+
+void paint_display_list(platform::GraphicsContext& graphics,
+                        const DisplayList& display_list);
+
 } // namespace lithium::render

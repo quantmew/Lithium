@@ -85,6 +85,7 @@ enum class OpCode : u8 {
     ArraySpread,    // spread iterable (array, value -> array)
     MakeObject,     // no operand
     ObjectSpread,   // (object, source -> object)
+    GetOwnPropertyNames,  // 获取对象的所有可枚举属性名数组 (object -> array)
 
     // Functions
     MakeFunction,   // u16 function_idx
@@ -105,7 +106,73 @@ enum class OpCode : u8 {
 };
 
 // ============================================================================
-// Chunk: bytecode + constants
+// Debug Information - Bytecode location tracking
+// ============================================================================
+
+// Simplified location for bytecode (just start position)
+struct BytecodeLocation {
+    usize line{0};      // Line number (1-based)
+    usize column{0};    // Column number (1-based)
+
+    BytecodeLocation() = default;
+    BytecodeLocation(usize l, usize c) : line(l), column(c) {}
+
+    [[nodiscard]] bool is_valid() const { return line > 0; }
+};
+
+// Sparse mapping from bytecode offset to source location
+// Only stores entries when location changes (space-efficient)
+struct DebugInfo {
+    struct Entry {
+        usize offset;                  // Bytecode offset
+        BytecodeLocation location;     // Source location
+
+        Entry(usize off, BytecodeLocation loc) : offset(off), location(loc) {}
+    };
+
+    std::vector<Entry> entries;
+
+    // Add a new debug entry (only if location changed)
+    void add_location(usize offset, BytecodeLocation location) {
+        // Skip if location hasn't changed
+        if (!entries.empty() &&
+            entries.back().location.line == location.line &&
+            entries.back().location.column == location.column) {
+            return;
+        }
+        entries.emplace_back(offset, location);
+    }
+
+    // Find source location for a given bytecode offset
+    [[nodiscard]] BytecodeLocation find_location(usize offset) const {
+        if (entries.empty()) {
+            return BytecodeLocation{};
+        }
+
+        // Binary search for the entry with largest offset <= target
+        usize left = 0;
+        usize right = entries.size();
+
+        while (left < right) {
+            usize mid = left + (right - left) / 2;
+            if (entries[mid].offset <= offset) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+
+        if (left == 0) {
+            return entries[0].location;
+        }
+        return entries[left - 1].location;
+    }
+
+    void clear() { entries.clear(); }
+};
+
+// ============================================================================
+// Chunk: bytecode + constants + debug info
 // ============================================================================
 
 class Chunk {
@@ -128,9 +195,21 @@ public:
 
     [[nodiscard]] const std::vector<u8>& code() const { return m_code; }
 
+    // Debug information
+    void add_debug_location(BytecodeLocation location) {
+        m_debug_info.add_location(m_code.size(), location);
+    }
+
+    [[nodiscard]] BytecodeLocation get_location(usize offset) const {
+        return m_debug_info.find_location(offset);
+    }
+
+    [[nodiscard]] const DebugInfo& debug_info() const { return m_debug_info; }
+
 private:
     std::vector<u8> m_code;
     std::vector<Value> m_constants;
+    DebugInfo m_debug_info;
 };
 
 // ============================================================================

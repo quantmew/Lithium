@@ -220,22 +220,27 @@ void Engine::apply_stylesheets() {
     auto style_elements = m_document->get_elements_by_tag_name("style"_s);
     for (auto* style : style_elements) {
         String css = style->text_content();
-        auto stylesheet = m_css_parser.parse(css);
+        auto stylesheet = m_css_parser.parse_stylesheet(css);
         m_style_resolver.add_stylesheet(stylesheet);
     }
 
     // Find all <link rel="stylesheet"> elements
     auto link_elements = m_document->get_elements_by_tag_name("link"_s);
     for (auto* link : link_elements) {
-        if (link->get_attribute("rel"_s) == "stylesheet"_s) {
-            String href = link->get_attribute("href"_s);
-            if (!href.empty()) {
-                auto result = m_resource_loader.load(href, network::ResourceType::Stylesheet);
-                if (result.is_ok()) {
-                    auto stylesheet = m_css_parser.parse(result.value().data_as_string());
-                    m_style_resolver.add_stylesheet(stylesheet);
-                }
-            }
+        auto rel = link->get_attribute("rel"_s);
+        if (!rel || !rel->equals_ignore_case("stylesheet"_s)) {
+            continue;
+        }
+
+        auto href = link->get_attribute("href"_s);
+        if (!href || href->empty()) {
+            continue;
+        }
+
+        auto result = m_resource_loader.load(*href, network::ResourceType::Stylesheet);
+        if (result.is_ok()) {
+            auto stylesheet = m_css_parser.parse_stylesheet(result.value().data_as_string());
+            m_style_resolver.add_stylesheet(stylesheet);
         }
     }
 
@@ -249,10 +254,9 @@ void Engine::execute_scripts() {
     // Find all <script> elements
     auto script_elements = m_document->get_elements_by_tag_name("script"_s);
     for (auto* script : script_elements) {
-        String src = script->get_attribute("src"_s);
-        if (!src.empty()) {
+        if (auto src = script->get_attribute("src"_s); src && !src->empty()) {
             // External script
-            auto result = m_resource_loader.load(src, network::ResourceType::Script);
+            auto result = m_resource_loader.load(*src, network::ResourceType::Script);
             if (result.is_ok()) {
                 execute_script(result.value().data_as_string());
             }
@@ -276,9 +280,14 @@ void Engine::update_layout() {
 
     // Perform layout
     if (m_layout_tree) {
-        layout::perform_layout(*m_layout_tree,
-            static_cast<f32>(m_viewport_width),
-            static_cast<f32>(m_viewport_height));
+        layout::LayoutContext context{};
+        context.containing_block_width = static_cast<f32>(m_viewport_width);
+        context.containing_block_height = static_cast<f32>(m_viewport_height);
+        context.viewport_width = static_cast<f32>(m_viewport_width);
+        context.viewport_height = static_cast<f32>(m_viewport_height);
+        context.root_font_size = 16.0f;
+        context.font_context = &m_layout_engine.font_context();
+        m_layout_engine.layout(*m_layout_tree, context);
     }
 
     m_layout_dirty = false;

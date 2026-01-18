@@ -197,12 +197,12 @@ TEST(JSParserTest, ParsesSpreadInArrayAndObject) {
     EXPECT_TRUE(obj->properties[0].spread);
 }
 
-TEST(JSParserTest, ThisIsNotSpecialCased) {
+TEST(JSParserTest, ThisExpressionParsing) {
     Parser parser;
     auto expr = parser.parse_expression("this"_s);
     ASSERT_FALSE(parser.has_errors());
 
-    auto* id = dynamic_cast<Identifier*>(expr.get());
-    ASSERT_NE(id, nullptr);
-    EXPECT_EQ(id->name, "this"_s);
+    // 'this' should be parsed as a ThisExpression, not a plain Identifier
+    auto* this_expr = dynamic_cast<ThisExpression*>(expr.get());
+    ASSERT_NE(this_expr, nullptr);
 }

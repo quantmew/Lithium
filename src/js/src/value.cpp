@@ -17,40 +17,29 @@ namespace lithium::js {
 // Reference counting for NaN-boxed pointers
 // ============================================================================
 
-// Strings now use the StringInternPool for interning.
-// InternedString is defined in string_intern.hpp with ref counting built in.
-
-// Object wrapper for reference counting
-struct RefCountedObject {
-    std::atomic<u32> ref_count{1};
-    std::shared_ptr<Object> obj;
-
-    explicit RefCountedObject(std::shared_ptr<Object> o) : obj(std::move(o)) {}
-    explicit RefCountedObject(Object* o) : obj(o, [](Object*){}) {}
-};
-
-// inc_ref/dec_ref are only called when is_heap_type() returns true
-// so we skip the redundant type check here
+// ============================================================================
+// GC-managed objects - no reference counting
+// ============================================================================
+//
+// Strings use StringInternPool with ref counting (they're small and shared)
+// Objects are managed by GC - Value stores raw pointers, GC ensures liveness
 
 void Value::inc_ref() const {
-    // Both InternedString and RefCountedObject have ref_count at offset 0
-    auto* ref = reinterpret_cast<std::atomic<u32>*>(m_bits & PAYLOAD_MASK);
-    ref->fetch_add(1, std::memory_order_relaxed);
+    // Only strings need ref counting (interned strings)
+    if ((m_bits & TAG_MASK) == TAG_STRING) {
+        auto* ref = reinterpret_cast<std::atomic<u32>*>(m_bits & PAYLOAD_MASK);
+        ref->fetch_add(1, std::memory_order_relaxed);
+    }
+    // Objects: no-op, GC manages them
 }
 
 void Value::dec_ref() const {
-    void* ptr = reinterpret_cast<void*>(m_bits & PAYLOAD_MASK);
-
+    // Only strings need ref counting (interned strings)
     if ((m_bits & TAG_MASK) == TAG_STRING) {
-        // Use intern pool's dec_ref for strings
+        void* ptr = reinterpret_cast<void*>(m_bits & PAYLOAD_MASK);
         StringInternPool::instance().dec_ref(reinterpret_cast<InternedString*>(ptr));
-    } else {
-        // Object ref counting
-        auto* ref = reinterpret_cast<std::atomic<u32>*>(ptr);
-        if (ref->fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            delete reinterpret_cast<RefCountedObject*>(ptr);
-        }
     }
+    // Objects: no-op, GC manages them
 }
 
 // ============================================================================
@@ -78,8 +67,8 @@ Value::Value(String* s) {
 
 Value::Value(Object* obj) {
     if (obj) {
-        auto* rco = new RefCountedObject(obj);
-        m_bits = make_tagged_ptr(TAG_OBJECT, rco);
+        // Store raw pointer directly - GC manages lifetime
+        m_bits = make_tagged_ptr(TAG_OBJECT, obj);
     } else {
         m_bits = NULL_BITS;
     }
@@ -87,8 +76,8 @@ Value::Value(Object* obj) {
 
 Value::Value(std::shared_ptr<Object> obj) {
     if (obj) {
-        auto* rco = new RefCountedObject(std::move(obj));
-        m_bits = make_tagged_ptr(TAG_OBJECT, rco);
+        // Store raw pointer directly - GC manages lifetime
+        m_bits = make_tagged_ptr(TAG_OBJECT, obj.get());
     } else {
         m_bits = NULL_BITS;
     }
@@ -161,9 +150,8 @@ const String& Value::as_string() const {
 
 Object* Value::as_object() const {
     if (!is_object()) return nullptr;
-    auto* rco = get_pointer<RefCountedObject>();
-    if (!rco) return nullptr;
-    return rco->obj.get();
+    // Return raw pointer directly (GC-managed)
+    return get_pointer<Object>();
 }
 
 NativeFunction* Value::as_native_function() const {
@@ -410,7 +398,13 @@ void Value::mark() const {
 }
 
 Value Value::native_function(NativeFn fn, u8 arity, const String& name) {
-    return Value(std::make_shared<NativeFunction>(name, std::move(fn), arity));
+    // DEPRECATED: This function cannot work with GC - the object would be immediately collected
+    // Use VM::define_native instead, which allocates through the GC
+    // Returning undefined as a safe fallback
+    (void)fn;
+    (void)arity;
+    (void)name;
+    return Value::undefined();
 }
 
 // ============================================================================

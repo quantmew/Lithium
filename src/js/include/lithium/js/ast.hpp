@@ -271,6 +271,14 @@ struct ForStatement : Statement {
     StatementPtr body;
 };
 
+struct ForInStatement : Statement {
+    String variable;                    // 迭代变量名 (如 "key")
+    bool use_let{false};                // true: let, false: var
+    bool use_const{false};              // true: const
+    ExpressionPtr object;               // 被迭代的对象
+    StatementPtr body;                  // 循环体
+};
+
 struct SwitchCase : ASTNode {
     ExpressionPtr test; // null for default
     std::vector<StatementPtr> consequent;

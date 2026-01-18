@@ -35,7 +35,8 @@ struct RuleVariant;
 struct AtRule {
     String name;
     std::vector<ComponentValue> prelude;
-    std::optional<std::vector<std::shared_ptr<RuleVariant>>> block;
+    std::optional<DeclarationBlock> declarations;            // e.g. @font-face
+    std::optional<std::vector<std::shared_ptr<RuleVariant>>> nested_rules; // e.g. @media/@supports
 };
 
 // Rule is a variant of StyleRule or AtRule
@@ -96,8 +97,8 @@ public:
 
 private:
     // Core parsing algorithms (CSS Syntax Module Level 3)
-    std::vector<Rule> consume_rule_list(bool top_level);
-    std::optional<Rule> consume_rule(bool top_level);
+    std::vector<Rule> consume_rule_list(bool top_level, bool stop_on_close_curly = false);
+    std::optional<Rule> consume_rule(bool top_level, bool stop_on_close_curly);
     std::optional<AtRule> consume_at_rule();
     std::optional<StyleRule> consume_qualified_rule();
     DeclarationBlock consume_declaration_block();

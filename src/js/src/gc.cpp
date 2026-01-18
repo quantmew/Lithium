@@ -104,7 +104,8 @@ void GarbageCollector::trace_references() {
     while (!m_gray_stack.empty()) {
         Object* obj = m_gray_stack.back();
         m_gray_stack.pop_back();
-        obj->trace();
+        // Pass *this (GC instance) to trace() so it can properly mark nested objects
+        obj->trace(*this);
     }
 }
 

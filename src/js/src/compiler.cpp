@@ -106,6 +106,11 @@ private:
             analyze_statement(*for_stmt->body);
             return;
         }
+        if (auto* for_in_stmt = dynamic_cast<const ForInStatement*>(&stmt)) {
+            analyze_expression(*for_in_stmt->object);
+            analyze_statement(*for_in_stmt->body);
+            return;
+        }
         if (auto* try_stmt = dynamic_cast<const TryStatement*>(&stmt)) {
             analyze_statement(*try_stmt->block);
             if (try_stmt->handler) {
@@ -301,6 +306,13 @@ private:
             if (for_stmt->body) collect_locals_in_statement(*for_stmt->body, fn);
             return;
         }
+        if (auto* for_in_stmt = dynamic_cast<const ForInStatement*>(&stmt)) {
+            // for...in 会创建临时变量和用户变量
+            // 临时变量在编译时添加，这里只声明用户变量
+            fn.add_local(for_in_stmt->variable, for_in_stmt->use_const);
+            if (for_in_stmt->body) collect_locals_in_statement(*for_in_stmt->body, fn);
+            return;
+        }
         if (auto* switch_stmt = dynamic_cast<const SwitchStatement*>(&stmt)) {
             for (const auto& case_stmt : switch_stmt->cases) {
                 for (const auto& cons : case_stmt.consequent) {
@@ -344,6 +356,16 @@ private:
 
     void emit(FunctionCode& fn, OpCode op) {
         fn.chunk.write(op);
+    }
+
+    // Record source location for the next instruction
+    void emit_debug_location(FunctionCode& fn, const ASTNode& node) {
+        if (node.location.start_line > 0) {
+            fn.chunk.add_debug_location(BytecodeLocation{
+                node.location.start_line,
+                node.location.start_column
+            });
+        }
     }
 
     void emit_u8(FunctionCode& fn, u8 v) {
@@ -409,6 +431,9 @@ private:
     }
 
     void compile_statement(const Statement& stmt, FunctionCode& fn, bool is_entry_last) {
+        // Record source location for this statement
+        emit_debug_location(fn, stmt);
+
         if (auto* expr = dynamic_cast<const ExpressionStatement*>(&stmt)) {
             compile_expression(*expr->expression, fn);
             emit(fn, is_entry_last ? OpCode::Return : OpCode::Pop);
@@ -625,6 +650,105 @@ private:
             return;
         }
 
+        if (auto* for_in_stmt = dynamic_cast<const ForInStatement*>(&stmt)) {
+            // for...in 循环实现：转换为标准 for 循环
+            // for (var key in obj) { body }
+            // 转换为:
+            // var __keys = GetOwnPropertyNames(obj);
+            // for (var __i = 0; __i < __keys.length; __i++) {
+            //     var key = __keys[__i];
+            //     body
+            // }
+
+            // 1. 计算对象表达式并获取其属性名数组
+            compile_expression(*for_in_stmt->object, fn);
+            emit(fn, OpCode::GetOwnPropertyNames);
+
+            // 2. 将属性名数组存储到临时变量 __keys
+            // 为循环创建两个临时变量：__keys (数组) 和 __i (索引)
+            String keys_var = "__for_in_keys_"_s + String(std::to_string(fn.local_count));
+            String index_var = "__for_in_i_"_s + String(std::to_string(fn.local_count + 1));
+
+            u16 keys_slot = fn.add_local(keys_var, false);
+            u16 index_slot = fn.add_local(index_var, false);
+
+            emit(fn, OpCode::SetLocal);
+            emit_u16(fn, keys_slot);
+            emit(fn, OpCode::Pop);
+
+            // 3. 初始化索引变量 __i = 0
+            emit(fn, OpCode::LoadConst);
+            emit_u16(fn, add_constant(fn, Value(0.0)));
+            emit(fn, OpCode::SetLocal);
+            emit_u16(fn, index_slot);
+            emit(fn, OpCode::Pop);
+
+            // 4. 循环开始
+            usize loop_start = fn.chunk.size();
+
+            // 5. 条件测试：__i < __keys.length
+            emit(fn, OpCode::GetLocal);
+            emit_u16(fn, index_slot);
+
+            emit(fn, OpCode::GetLocal);
+            emit_u16(fn, keys_slot);
+            emit_get_prop_ic(fn, "length"_s);
+
+            emit(fn, OpCode::LessThan);
+            usize exit_jump = emit_jump(fn, OpCode::JumpIfFalse);
+            emit(fn, OpCode::Pop);
+
+            // 6. 声明用户的迭代变量并赋值：key = __keys[__i]
+            u16 user_var_slot = fn.add_local(for_in_stmt->variable, for_in_stmt->use_const);
+
+            emit(fn, OpCode::GetLocal);
+            emit_u16(fn, keys_slot);
+            emit(fn, OpCode::GetLocal);
+            emit_u16(fn, index_slot);
+            emit(fn, OpCode::GetElem);
+
+            emit(fn, OpCode::SetLocal);
+            emit_u16(fn, user_var_slot);
+            emit(fn, OpCode::Pop);
+
+            // 7. 编译循环体
+            LoopContext loop;
+            loop.continue_target = 0;
+            m_loop_stack.push_back(loop);
+            compile_statement(*for_in_stmt->body, fn, false);
+
+            // 8. 更新部分：__i++
+            usize update_start = fn.chunk.size();
+            m_loop_stack.back().continue_target = update_start;
+            for (usize patch : m_loop_stack.back().continue_patches) {
+                patch_to(fn, patch, update_start);
+            }
+
+            emit(fn, OpCode::GetLocal);
+            emit_u16(fn, index_slot);
+            emit(fn, OpCode::LoadConst);
+            emit_u16(fn, add_constant(fn, Value(1.0)));
+            emit(fn, OpCode::Add);
+            emit(fn, OpCode::SetLocal);
+            emit_u16(fn, index_slot);
+            emit(fn, OpCode::Pop);
+
+            // 9. 跳回循环开始
+            emit(fn, OpCode::Jump);
+            usize back_operand = fn.chunk.size();
+            fn.chunk.write_i16(0);
+            i16 offset = static_cast<i16>(loop_start) - static_cast<i16>(back_operand + 2);
+            fn.chunk.patch_i16(back_operand, offset);
+
+            // 10. 退出循环
+            patch_jump(fn, exit_jump);
+            for (usize patch : m_loop_stack.back().break_patches) {
+                patch_jump(fn, patch);
+            }
+            m_loop_stack.pop_back();
+            return;
+        }
+
         if (auto* switch_stmt = dynamic_cast<const SwitchStatement*>(&stmt)) {
             compile_expression(*switch_stmt->discriminant, fn);
             LoopContext switch_ctx;
@@ -753,6 +877,9 @@ private:
 
     // Expressions
     void compile_expression(const Expression& expr, FunctionCode& fn) {
+        // Emit debug location for this expression
+        emit_debug_location(fn, expr);
+
         if (dynamic_cast<const NullLiteral*>(&expr)) {
             emit(fn, OpCode::LoadNull);
             return;
@@ -1053,11 +1180,83 @@ private:
     void compile_assignment(const AssignmentExpression& expr, FunctionCode& fn) {
         using Op = AssignmentExpression::Operator;
         bool is_compound = expr.op != Op::Assign;
+        bool is_logical = (expr.op == Op::LogicalAndAssign || expr.op == Op::LogicalOrAssign || expr.op == Op::NullishAssign);
 
         if (auto* id = dynamic_cast<Identifier*>(expr.left.get())) {
             auto local_slot = fn.resolve_local(id->name);
             u16 name_idx = local_slot ? 0 : add_name(fn, id->name);
-            if (is_compound) {
+
+            if (is_logical) {
+                // Logical assignment operators have short-circuit semantics
+                // a &&= b  -->  a && (a = b)
+                // a ||= b  -->  a || (a = b)
+                // a ??= b  -->  a ?? (a = b)
+
+                // Load current value
+                if (local_slot) {
+                    emit(fn, OpCode::GetLocal);
+                    emit_u16(fn, *local_slot);
+                } else {
+                    emit(fn, OpCode::GetVar);
+                    emit_u16(fn, name_idx);
+                }
+
+                // Duplicate for both condition check and potential result
+                emit(fn, OpCode::Dup);
+
+                // Check condition and short-circuit if needed
+                if (expr.op == Op::LogicalAndAssign) {
+                    // For &&=, skip assignment if current value is falsy
+                    usize short_circuit_jump = emit_jump(fn, OpCode::JumpIfFalse);
+                    // Pop the duplicated value (we're doing the assignment)
+                    emit(fn, OpCode::Pop);
+                    // Compile right side and assign
+                    compile_expression(*expr.right, fn);
+                    if (local_slot) {
+                        emit(fn, OpCode::SetLocal);
+                        emit_u16(fn, *local_slot);
+                    } else {
+                        emit(fn, OpCode::SetVar);
+                        emit_u16(fn, name_idx);
+                    }
+                    patch_jump(fn, short_circuit_jump);
+                } else if (expr.op == Op::LogicalOrAssign) {
+                    // For ||=, assign only if current value is falsy
+                    usize to_assign = emit_jump(fn, OpCode::JumpIfFalse);
+                    usize skip_assign = emit_jump(fn, OpCode::Jump);
+                    patch_jump(fn, to_assign);
+                    // Pop the duplicated value (we're doing the assignment)
+                    emit(fn, OpCode::Pop);
+                    // Compile right side and assign
+                    compile_expression(*expr.right, fn);
+                    if (local_slot) {
+                        emit(fn, OpCode::SetLocal);
+                        emit_u16(fn, *local_slot);
+                    } else {
+                        emit(fn, OpCode::SetVar);
+                        emit_u16(fn, name_idx);
+                    }
+                    patch_jump(fn, skip_assign);
+                } else {  // NullishAssign
+                    // For ??=, assign only if current value is nullish
+                    usize to_assign = emit_jump(fn, OpCode::JumpIfNullish);
+                    usize skip_assign = emit_jump(fn, OpCode::Jump);
+                    patch_jump(fn, to_assign);
+                    // Pop the duplicated value (we're doing the assignment)
+                    emit(fn, OpCode::Pop);
+                    // Compile right side and assign
+                    compile_expression(*expr.right, fn);
+                    if (local_slot) {
+                        emit(fn, OpCode::SetLocal);
+                        emit_u16(fn, *local_slot);
+                    } else {
+                        emit(fn, OpCode::SetVar);
+                        emit_u16(fn, name_idx);
+                    }
+                    patch_jump(fn, skip_assign);
+                }
+            } else if (is_compound) {
+                // Arithmetic/bitwise compound assignment
                 // Load current value first
                 if (local_slot) {
                     emit(fn, OpCode::GetLocal);
@@ -1066,17 +1265,25 @@ private:
                     emit(fn, OpCode::GetVar);
                     emit_u16(fn, name_idx);
                 }
-            }
-            compile_expression(*expr.right, fn);
-            if (is_compound) {
+                compile_expression(*expr.right, fn);
                 emit_compound_op(expr.op, fn);
-            }
-            if (local_slot) {
-                emit(fn, OpCode::SetLocal);
-                emit_u16(fn, *local_slot);
+                if (local_slot) {
+                    emit(fn, OpCode::SetLocal);
+                    emit_u16(fn, *local_slot);
+                } else {
+                    emit(fn, OpCode::SetVar);
+                    emit_u16(fn, name_idx);
+                }
             } else {
-                emit(fn, OpCode::SetVar);
-                emit_u16(fn, name_idx);
+                // Simple assignment
+                compile_expression(*expr.right, fn);
+                if (local_slot) {
+                    emit(fn, OpCode::SetLocal);
+                    emit_u16(fn, *local_slot);
+                } else {
+                    emit(fn, OpCode::SetVar);
+                    emit_u16(fn, name_idx);
+                }
             }
             return;
         }
@@ -1087,7 +1294,64 @@ private:
                 compile_expression(*member->property, fn);
             }
 
-            if (is_compound) {
+            if (is_logical) {
+                // Logical assignment for member expressions
+                // Duplicate object (and key if computed) for getting and setting
+                if (member->computed) {
+                    emit(fn, OpCode::Dup2);  // Dup [obj, key]
+                    emit(fn, OpCode::GetElem);
+                } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
+                    emit(fn, OpCode::Dup);   // Dup obj
+                    emit_get_prop_ic(fn, pid->name);
+                }
+
+                // Duplicate the current value for condition check
+                emit(fn, OpCode::Dup);
+
+                // Check condition and short-circuit if needed
+                if (expr.op == Op::LogicalAndAssign) {
+                    usize short_circuit_jump = emit_jump(fn, OpCode::JumpIfFalse);
+                    // Pop the duplicated value (we're doing the assignment)
+                    emit(fn, OpCode::Pop);
+                    // Compile right side and assign
+                    compile_expression(*expr.right, fn);
+                    if (member->computed) {
+                        emit(fn, OpCode::SetElem);
+                    } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
+                        emit_set_prop_ic(fn, pid->name);
+                    }
+                    patch_jump(fn, short_circuit_jump);
+                } else if (expr.op == Op::LogicalOrAssign) {
+                    usize to_assign = emit_jump(fn, OpCode::JumpIfFalse);
+                    usize skip_assign = emit_jump(fn, OpCode::Jump);
+                    patch_jump(fn, to_assign);
+                    // Pop the duplicated value (we're doing the assignment)
+                    emit(fn, OpCode::Pop);
+                    // Compile right side and assign
+                    compile_expression(*expr.right, fn);
+                    if (member->computed) {
+                        emit(fn, OpCode::SetElem);
+                    } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
+                        emit_set_prop_ic(fn, pid->name);
+                    }
+                    patch_jump(fn, skip_assign);
+                } else {  // NullishAssign
+                    usize to_assign = emit_jump(fn, OpCode::JumpIfNullish);
+                    usize skip_assign = emit_jump(fn, OpCode::Jump);
+                    patch_jump(fn, to_assign);
+                    // Pop the duplicated value (we're doing the assignment)
+                    emit(fn, OpCode::Pop);
+                    // Compile right side and assign
+                    compile_expression(*expr.right, fn);
+                    if (member->computed) {
+                        emit(fn, OpCode::SetElem);
+                    } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
+                        emit_set_prop_ic(fn, pid->name);
+                    }
+                    patch_jump(fn, skip_assign);
+                }
+            } else if (is_compound) {
+                // Arithmetic/bitwise compound assignment
                 // Duplicate object (and key if computed) for later SetProp/SetElem
                 if (member->computed) {
                     emit(fn, OpCode::Dup2);  // Dup [obj, key]
@@ -1097,19 +1361,26 @@ private:
                     // Use IC-enabled property access
                     emit_get_prop_ic(fn, pid->name);
                 }
-            }
 
-            compile_expression(*expr.right, fn);
-
-            if (is_compound) {
+                compile_expression(*expr.right, fn);
                 emit_compound_op(expr.op, fn);
-            }
 
-            if (member->computed) {
-                emit(fn, OpCode::SetElem);
-            } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
-                // Use IC-enabled property access
-                emit_set_prop_ic(fn, pid->name);
+                if (member->computed) {
+                    emit(fn, OpCode::SetElem);
+                } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
+                    // Use IC-enabled property access
+                    emit_set_prop_ic(fn, pid->name);
+                }
+            } else {
+                // Simple assignment
+                compile_expression(*expr.right, fn);
+
+                if (member->computed) {
+                    emit(fn, OpCode::SetElem);
+                } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
+                    // Use IC-enabled property access
+                    emit_set_prop_ic(fn, pid->name);
+                }
             }
             return;
         }

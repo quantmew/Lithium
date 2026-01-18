@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
 
     // Set up callbacks
     engine.set_title_changed_callback([&window](const String& title) {
-        window->set_title("Lithium - " + title);
+        window->set_title("Lithium - "_s + title);
     });
 
     // Load initial URL or default page

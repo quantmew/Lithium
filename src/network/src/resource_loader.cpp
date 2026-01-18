@@ -4,6 +4,19 @@
 
 #include "lithium/network/resource_loader.hpp"
 #include <algorithm>
+#include <string>
+
+namespace {
+
+std::optional<lithium::usize> rfind_char(const lithium::String& str, char needle) {
+    auto pos = str.std_string().rfind(needle);
+    if (pos == std::string::npos) {
+        return std::nullopt;
+    }
+    return pos;
+}
+
+} // namespace
 
 namespace lithium::network {
 
@@ -31,7 +44,7 @@ Result<Resource, String> ResourceLoader::load(const String& url, ResourceType ty
     if (m_cache_enabled) {
         auto cached = get_cached(resolved_url);
         if (cached) {
-            return Result<Resource, String>::ok(std::move(*cached));
+            return Result<Resource, String>(std::move(*cached));
         }
     }
 
@@ -67,14 +80,13 @@ Result<Resource, String> ResourceLoader::load(const String& url, ResourceType ty
     --m_pending_count;
 
     if (!result.is_ok()) {
-        return Result<Resource, String>::error(result.error());
+        return make_error(result.error());
     }
 
     auto& response = result.value();
 
     if (!response.is_success()) {
-        return Result<Resource, String>::error(
-            "HTTP error: "_s + String(std::to_string(response.status_code)));
+        return make_error("HTTP error: "_s + String(std::to_string(response.status_code)));
     }
 
     // Create resource
@@ -87,9 +99,8 @@ Result<Resource, String> ResourceLoader::load(const String& url, ResourceType ty
 
     // Extract charset from Content-Type
     if (auto content_type = response.headers.get("Content-Type"_s)) {
-        auto pos = content_type->find("charset="_s);
-        if (pos != String::npos) {
-            resource.charset = content_type->substr(pos + 8);
+        if (auto pos = content_type->find("charset="_s)) {
+            resource.charset = content_type->substring(*pos + 8);
         }
     }
 
@@ -103,7 +114,7 @@ Result<Resource, String> ResourceLoader::load(const String& url, ResourceType ty
         cache_resource(resource);
     }
 
-    return Result<Resource, String>::ok(std::move(resource));
+    return Result<Resource, String>(std::move(resource));
 }
 
 void ResourceLoader::load_async(const String& url, ResourceType type, LoadCallback callback) {
@@ -119,7 +130,7 @@ void ResourceLoader::set_base_url(const String& base_url) {
 
 String ResourceLoader::resolve_url(const String& url) const {
     // Already absolute URL
-    if (url.find("://"_s) != String::npos) {
+    if (url.contains("://"_s)) {
         return url;
     }
 
@@ -135,7 +146,7 @@ String ResourceLoader::resolve_url(const String& url) const {
 
     // Handle protocol-relative URLs
     if (url.size() >= 2 && url[0] == '/' && url[1] == '/') {
-        return base->scheme + ":" + url;
+        return base->scheme + ":"_s + url;
     }
 
     // Handle absolute path
@@ -147,11 +158,11 @@ String ResourceLoader::resolve_url(const String& url) const {
     }
 
     // Handle relative path
-    usize last_slash = base->path.rfind('/');
-    if (last_slash != String::npos) {
-        base->path = base->path.substr(0, last_slash + 1) + url;
+    auto last_slash = rfind_char(base->path, '/');
+    if (last_slash) {
+        base->path = base->path.substring(0, *last_slash + 1) + url;
     } else {
-        base->path = "/" + url;
+        base->path = "/"_s + url;
     }
 
     // Normalize path (handle . and ..)
@@ -179,49 +190,45 @@ std::optional<ResourceLoader::ParsedUrl> ResourceLoader::parse_url(const String&
     ParsedUrl result;
 
     // Find scheme
-    usize scheme_end = url.find("://"_s);
-    if (scheme_end == String::npos) {
+    auto scheme_end = url.find("://"_s);
+    if (!scheme_end) {
         return std::nullopt;
     }
-    result.scheme = url.substr(0, scheme_end);
+    result.scheme = url.substring(0, *scheme_end);
 
     // Find host and path
-    usize host_start = scheme_end + 3;
-    usize path_start = url.find('/', host_start);
-    if (path_start == String::npos) {
-        result.host = url.substr(host_start);
+    usize host_start = *scheme_end + 3;
+    auto path_start = url.find('/', host_start);
+    if (!path_start) {
+        result.host = url.substring(host_start);
         result.path = "/"_s;
     } else {
-        result.host = url.substr(host_start, path_start - host_start);
-        result.path = url.substr(path_start);
+        result.host = url.substring(host_start, *path_start - host_start);
+        result.path = url.substring(*path_start);
     }
 
     // Extract port from host
-    usize port_pos = result.host.find(':');
-    if (port_pos != String::npos) {
-        String port_str = result.host.substr(port_pos + 1);
-        result.port = static_cast<u16>(std::stoi(std::string(port_str.data(), port_str.size())));
-        result.host = result.host.substr(0, port_pos);
+    if (auto port_pos = result.host.find(':')) {
+        String port_str = result.host.substring(*port_pos + 1);
+        result.port = static_cast<u16>(std::stoi(port_str.std_string()));
+        result.host = result.host.substring(0, *port_pos);
     } else {
         result.port = (result.scheme == "https"_s) ? 443 : 80;
     }
 
     // Extract query and fragment
-    usize query_pos = result.path.find('?');
-    if (query_pos != String::npos) {
-        usize frag_pos = result.path.find('#', query_pos);
-        if (frag_pos != String::npos) {
-            result.fragment = result.path.substr(frag_pos + 1);
-            result.query = result.path.substr(query_pos + 1, frag_pos - query_pos - 1);
+    if (auto query_pos = result.path.find('?')) {
+        if (auto frag_pos = result.path.find('#', *query_pos)) {
+            result.fragment = result.path.substring(*frag_pos + 1);
+            result.query = result.path.substring(*query_pos + 1, *frag_pos - *query_pos - 1);
         } else {
-            result.query = result.path.substr(query_pos + 1);
+            result.query = result.path.substring(*query_pos + 1);
         }
-        result.path = result.path.substr(0, query_pos);
+        result.path = result.path.substring(0, *query_pos);
     } else {
-        usize frag_pos = result.path.find('#');
-        if (frag_pos != String::npos) {
-            result.fragment = result.path.substr(frag_pos + 1);
-            result.path = result.path.substr(0, frag_pos);
+        if (auto frag_pos = result.path.find('#')) {
+            result.fragment = result.path.substring(*frag_pos + 1);
+            result.path = result.path.substring(0, *frag_pos);
         }
     }
 
@@ -229,22 +236,22 @@ std::optional<ResourceLoader::ParsedUrl> ResourceLoader::parse_url(const String&
 }
 
 String ResourceLoader::build_url(const ParsedUrl& parsed) {
-    String url = parsed.scheme + "://" + parsed.host;
+    String url = parsed.scheme + "://"_s + parsed.host;
 
     bool default_port = (parsed.scheme == "http"_s && parsed.port == 80) ||
                        (parsed.scheme == "https"_s && parsed.port == 443);
     if (!default_port && parsed.port != 0) {
-        url += ":" + String(std::to_string(parsed.port));
+        url += ":"_s + String(std::to_string(parsed.port));
     }
 
     url += parsed.path;
 
     if (!parsed.query.empty()) {
-        url += "?" + parsed.query;
+        url += "?"_s + parsed.query;
     }
 
     if (!parsed.fragment.empty()) {
-        url += "#" + parsed.fragment;
+        url += "#"_s + parsed.fragment;
     }
 
     return url;
@@ -254,17 +261,15 @@ String ResourceLoader::detect_mime_type(const String& url, const HttpResponse& r
     // Check Content-Type header first
     if (auto content_type = response.headers.get("Content-Type"_s)) {
         // Extract MIME type (before charset)
-        usize semicolon = content_type->find(';');
-        if (semicolon != String::npos) {
-            return content_type->substr(0, semicolon);
+        if (auto semicolon = content_type->find(';')) {
+            return content_type->substring(0, *semicolon);
         }
         return *content_type;
     }
 
     // Guess from URL extension
-    usize dot = url.rfind('.');
-    if (dot != String::npos) {
-        String ext = url.substr(dot + 1);
+    if (auto dot = rfind_char(url, '.')) {
+        String ext = url.substring(*dot + 1);
 
         if (ext == "html"_s || ext == "htm"_s) return "text/html"_s;
         if (ext == "css"_s) return "text/css"_s;
@@ -283,23 +288,23 @@ String ResourceLoader::detect_mime_type(const String& url, const HttpResponse& r
 }
 
 ResourceType ResourceLoader::mime_to_resource_type(const String& mime_type) {
-    if (mime_type.find("text/html"_s) != String::npos) {
+    if (mime_type.contains("text/html"_s)) {
         return ResourceType::Document;
     }
-    if (mime_type.find("text/css"_s) != String::npos) {
+    if (mime_type.contains("text/css"_s)) {
         return ResourceType::Stylesheet;
     }
-    if (mime_type.find("javascript"_s) != String::npos) {
+    if (mime_type.contains("javascript"_s)) {
         return ResourceType::Script;
     }
-    if (mime_type.find("image/"_s) != String::npos) {
+    if (mime_type.contains("image/"_s)) {
         return ResourceType::Image;
     }
-    if (mime_type.find("font/"_s) != String::npos) {
+    if (mime_type.contains("font/"_s)) {
         return ResourceType::Font;
     }
-    if (mime_type.find("video/"_s) != String::npos ||
-        mime_type.find("audio/"_s) != String::npos) {
+    if (mime_type.contains("video/"_s) ||
+        mime_type.contains("audio/"_s)) {
         return ResourceType::Media;
     }
     return ResourceType::Other;

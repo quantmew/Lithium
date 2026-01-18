@@ -99,13 +99,13 @@ void DisplayListBuilder::paint_background(const layout::LayoutBox& box) {
 }
 
 void DisplayListBuilder::paint_borders(const layout::LayoutBox& box) {
-    const auto& style = box.style();
+    const auto& d = box.dimensions();
 
     // Skip if no borders
-    if (style.border_top_width == 0 &&
-        style.border_right_width == 0 &&
-        style.border_bottom_width == 0 &&
-        style.border_left_width == 0) {
+    if (d.border.top == 0 &&
+        d.border.right == 0 &&
+        d.border.bottom == 0 &&
+        d.border.left == 0) {
         return;
     }
 
@@ -119,7 +119,7 @@ void DisplayListBuilder::paint_border_top(const layout::LayoutBox& box) {
     const auto& style = box.style();
     const auto& d = box.dimensions();
 
-    if (style.border_top_width == 0 || style.border_top_color.a == 0) {
+    if (d.border.top == 0 || style.border_top_color.a == 0) {
         return;
     }
 
@@ -128,7 +128,7 @@ void DisplayListBuilder::paint_border_top(const layout::LayoutBox& box) {
         border_box.x,
         border_box.y,
         border_box.width,
-        style.border_top_width
+        d.border.top
     };
     m_display_list.push(FillRectCommand{rect, style.border_top_color});
 }
@@ -137,15 +137,15 @@ void DisplayListBuilder::paint_border_right(const layout::LayoutBox& box) {
     const auto& style = box.style();
     const auto& d = box.dimensions();
 
-    if (style.border_right_width == 0 || style.border_right_color.a == 0) {
+    if (d.border.right == 0 || style.border_right_color.a == 0) {
         return;
     }
 
     RectF border_box = d.border_box();
     RectF rect{
-        border_box.x + border_box.width - style.border_right_width,
+        border_box.x + border_box.width - d.border.right,
         border_box.y,
-        style.border_right_width,
+        d.border.right,
         border_box.height
     };
     m_display_list.push(FillRectCommand{rect, style.border_right_color});
@@ -155,16 +155,16 @@ void DisplayListBuilder::paint_border_bottom(const layout::LayoutBox& box) {
     const auto& style = box.style();
     const auto& d = box.dimensions();
 
-    if (style.border_bottom_width == 0 || style.border_bottom_color.a == 0) {
+    if (d.border.bottom == 0 || style.border_bottom_color.a == 0) {
         return;
     }
 
     RectF border_box = d.border_box();
     RectF rect{
         border_box.x,
-        border_box.y + border_box.height - style.border_bottom_width,
+        border_box.y + border_box.height - d.border.bottom,
         border_box.width,
-        style.border_bottom_width
+        d.border.bottom
     };
     m_display_list.push(FillRectCommand{rect, style.border_bottom_color});
 }
@@ -173,7 +173,7 @@ void DisplayListBuilder::paint_border_left(const layout::LayoutBox& box) {
     const auto& style = box.style();
     const auto& d = box.dimensions();
 
-    if (style.border_left_width == 0 || style.border_left_color.a == 0) {
+    if (d.border.left == 0 || style.border_left_color.a == 0) {
         return;
     }
 
@@ -181,7 +181,7 @@ void DisplayListBuilder::paint_border_left(const layout::LayoutBox& box) {
     RectF rect{
         border_box.x,
         border_box.y,
-        style.border_left_width,
+        d.border.left,
         border_box.height
     };
     m_display_list.push(FillRectCommand{rect, style.border_left_color});
@@ -202,11 +202,9 @@ void DisplayListBuilder::paint_text(const layout::LayoutBox& box) {
 
     // Extract from style if available
     if (!style.font_family.empty()) {
-        font_family = style.font_family;
+        font_family = style.font_family.front();
     }
-    if (style.font_size.has_value()) {
-        font_size = style.font_size->value;
-    }
+    font_size = static_cast<f32>(style.font_size.to_px(0, 16.0, 0, 0));
 
     m_display_list.push(DrawTextCommand{
         {d.content.x, d.content.y + font_size},  // Baseline position

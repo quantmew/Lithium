@@ -165,6 +165,20 @@ struct Token {
 // Lexer
 // ============================================================================
 
+// Lexer state snapshot for backtracking
+struct LexerState {
+    usize position{0};
+    usize line{1};
+    usize column{1};
+    usize token_start{0};
+    usize token_start_line{1};
+    usize token_start_column{1};
+    bool template_mode{false};
+    bool line_terminator_before{false};
+    bool allow_regexp{true};
+    std::optional<Token> peeked;
+};
+
 class Lexer {
 public:
     using ErrorCallback = std::function<void(const String& message, usize line, usize column)>;
@@ -192,6 +206,35 @@ public:
 
     // For template literal parsing
     void set_template_mode(bool enabled) { m_template_mode = enabled; }
+
+    // Backtracking support - save and restore lexer state
+    [[nodiscard]] LexerState save_state() const {
+        return LexerState{
+            m_position,
+            m_line,
+            m_column,
+            m_token_start,
+            m_token_start_line,
+            m_token_start_column,
+            m_template_mode,
+            m_line_terminator_before,
+            m_allow_regexp,
+            m_peeked
+        };
+    }
+
+    void restore_state(const LexerState& state) {
+        m_position = state.position;
+        m_line = state.line;
+        m_column = state.column;
+        m_token_start = state.token_start;
+        m_token_start_line = state.token_start_line;
+        m_token_start_column = state.token_start_column;
+        m_template_mode = state.template_mode;
+        m_line_terminator_before = state.line_terminator_before;
+        m_allow_regexp = state.allow_regexp;
+        m_peeked = state.peeked;
+    }
 
 private:
     // Character consumption
