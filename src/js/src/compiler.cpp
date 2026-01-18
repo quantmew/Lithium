@@ -3,6 +3,8 @@
  */
 
 #include "lithium/js/compiler.hpp"
+#include <optional>
+#include <unordered_set>
 
 namespace lithium::js {
 
@@ -11,6 +13,221 @@ namespace {
 struct FunctionBuilder {
     std::shared_ptr<FunctionCode> code;
     bool is_entry{false};
+};
+
+// ============================================================================
+// Escape Analysis - determines which allocations can use stack allocation
+// ============================================================================
+
+class EscapeAnalyzer {
+public:
+    // Analyze a function to find variables that don't escape
+    void analyze_function(const std::vector<StatementPtr>& body) {
+        m_escaping_vars.clear();
+        m_new_expr_vars.clear();
+        m_current_depth = 0;
+        for (const auto& stmt : body) {
+            analyze_statement(*stmt);
+        }
+    }
+
+    // Check if a new expression assigned to a variable can use stack allocation
+    bool can_stack_allocate(const String& var_name) const {
+        // Variable must hold a new expression result and not escape
+        return m_new_expr_vars.count(var_name) > 0 &&
+               m_escaping_vars.count(var_name) == 0;
+    }
+
+    // Track that a variable holds a new expression result
+    void mark_new_expr_var(const String& var_name) {
+        if (m_current_depth == 0) {
+            m_new_expr_vars.insert(var_name);
+        }
+    }
+
+private:
+    std::unordered_set<String> m_escaping_vars;   // Variables that escape
+    std::unordered_set<String> m_new_expr_vars;   // Variables holding new expressions
+    int m_current_depth{0};  // Nested function depth
+
+    void mark_escaping(const String& var_name) {
+        m_escaping_vars.insert(var_name);
+    }
+
+    void analyze_statement(const Statement& stmt) {
+        if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(&stmt)) {
+            analyze_expression(*expr_stmt->expression);
+            return;
+        }
+        if (auto* block = dynamic_cast<const BlockStatement*>(&stmt)) {
+            for (const auto& s : block->body) {
+                analyze_statement(*s);
+            }
+            return;
+        }
+        if (auto* decl = dynamic_cast<const VariableDeclaration*>(&stmt)) {
+            for (const auto& var : decl->declarations) {
+                if (var.init) {
+                    // Check if init is a new expression
+                    if (dynamic_cast<const NewExpression*>(var.init.get())) {
+                        mark_new_expr_var(var.id);
+                    }
+                    analyze_expression(*var.init);
+                }
+            }
+            return;
+        }
+        if (auto* ret = dynamic_cast<const ReturnStatement*>(&stmt)) {
+            if (ret->argument) {
+                // Returned values escape
+                mark_expression_escaping(*ret->argument);
+                analyze_expression(*ret->argument);
+            }
+            return;
+        }
+        if (auto* if_stmt = dynamic_cast<const IfStatement*>(&stmt)) {
+            analyze_expression(*if_stmt->test);
+            analyze_statement(*if_stmt->consequent);
+            if (if_stmt->alternate) {
+                analyze_statement(*if_stmt->alternate);
+            }
+            return;
+        }
+        if (auto* while_stmt = dynamic_cast<const WhileStatement*>(&stmt)) {
+            analyze_expression(*while_stmt->test);
+            analyze_statement(*while_stmt->body);
+            return;
+        }
+        if (auto* for_stmt = dynamic_cast<const ForStatement*>(&stmt)) {
+            if (for_stmt->init_statement) analyze_statement(*for_stmt->init_statement);
+            if (for_stmt->init_expression) analyze_expression(*for_stmt->init_expression);
+            if (for_stmt->test) analyze_expression(*for_stmt->test);
+            if (for_stmt->update) analyze_expression(*for_stmt->update);
+            analyze_statement(*for_stmt->body);
+            return;
+        }
+        if (auto* try_stmt = dynamic_cast<const TryStatement*>(&stmt)) {
+            analyze_statement(*try_stmt->block);
+            if (try_stmt->handler) {
+                analyze_statement(*try_stmt->handler);
+            }
+            if (try_stmt->finalizer) {
+                analyze_statement(*try_stmt->finalizer);
+            }
+            return;
+        }
+        if (auto* throw_stmt = dynamic_cast<const ThrowStatement*>(&stmt)) {
+            mark_expression_escaping(*throw_stmt->argument);
+            analyze_expression(*throw_stmt->argument);
+            return;
+        }
+        if (auto* fn_decl = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
+            // Enter nested function - any variables used here escape
+            m_current_depth++;
+            for (const auto& s : fn_decl->body) {
+                analyze_statement(*s);
+            }
+            m_current_depth--;
+            return;
+        }
+    }
+
+    void analyze_expression(const Expression& expr) {
+        if (auto* call = dynamic_cast<const CallExpression*>(&expr)) {
+            analyze_expression(*call->callee);
+            // Arguments passed to calls escape
+            for (const auto& arg : call->arguments) {
+                mark_expression_escaping(*arg);
+                analyze_expression(*arg);
+            }
+            return;
+        }
+        if (auto* new_expr = dynamic_cast<const NewExpression*>(&expr)) {
+            analyze_expression(*new_expr->callee);
+            for (const auto& arg : new_expr->arguments) {
+                mark_expression_escaping(*arg);
+                analyze_expression(*arg);
+            }
+            return;
+        }
+        if (auto* assign = dynamic_cast<const AssignmentExpression*>(&expr)) {
+            analyze_expression(*assign->right);
+            // If assigning to a property, the right side escapes
+            if (dynamic_cast<const MemberExpression*>(assign->left.get())) {
+                mark_expression_escaping(*assign->right);
+            }
+            // If assigning to a variable and we're in a nested function, it escapes
+            if (m_current_depth > 0) {
+                if (auto* id = dynamic_cast<const Identifier*>(assign->left.get())) {
+                    mark_escaping(id->name);
+                }
+            }
+            return;
+        }
+        if (auto* member = dynamic_cast<const MemberExpression*>(&expr)) {
+            analyze_expression(*member->object);
+            if (member->computed && member->property) {
+                analyze_expression(*member->property);
+            }
+            return;
+        }
+        if (auto* fn_expr = dynamic_cast<const FunctionExpression*>(&expr)) {
+            m_current_depth++;
+            if (fn_expr->concise_body) {
+                analyze_expression(*fn_expr->concise_body);
+            } else {
+                for (const auto& s : fn_expr->body) {
+                    analyze_statement(*s);
+                }
+            }
+            m_current_depth--;
+            return;
+        }
+        if (auto* binary = dynamic_cast<const BinaryExpression*>(&expr)) {
+            analyze_expression(*binary->left);
+            analyze_expression(*binary->right);
+            return;
+        }
+        if (auto* unary = dynamic_cast<const UnaryExpression*>(&expr)) {
+            analyze_expression(*unary->argument);
+            return;
+        }
+        if (auto* cond = dynamic_cast<const ConditionalExpression*>(&expr)) {
+            analyze_expression(*cond->test);
+            analyze_expression(*cond->consequent);
+            analyze_expression(*cond->alternate);
+            return;
+        }
+        if (auto* array = dynamic_cast<const ArrayExpression*>(&expr)) {
+            for (const auto& elem : array->elements) {
+                if (elem) {
+                    mark_expression_escaping(*elem);
+                    analyze_expression(*elem);
+                }
+            }
+            return;
+        }
+        if (auto* obj = dynamic_cast<const ObjectExpression*>(&expr)) {
+            for (const auto& prop : obj->properties) {
+                mark_expression_escaping(*prop.value);
+                analyze_expression(*prop.value);
+            }
+            return;
+        }
+        // Identifier at depth > 0 means closure over it
+        if (auto* id = dynamic_cast<const Identifier*>(&expr)) {
+            if (m_current_depth > 0) {
+                mark_escaping(id->name);
+            }
+            return;
+        }
+    }
+
+    void mark_expression_escaping(const Expression& expr) {
+        if (auto* id = dynamic_cast<const Identifier*>(&expr)) {
+            mark_escaping(id->name);
+        }
+    }
 };
 
 class CompilerImpl {
@@ -22,6 +239,7 @@ public:
         m_functions.clear();
         m_functions.push_back(entry);
 
+        collect_locals(*entry, program.body);
         compile_statements(program.body, *entry, /*is_entry*/true);
         emit_return(*entry);
 
@@ -38,6 +256,82 @@ private:
         usize continue_target{0};
         bool allows_continue{true};
     };
+
+    void collect_locals(FunctionCode& fn, const std::vector<StatementPtr>& stmts) {
+        for (const auto& stmt : stmts) {
+            collect_locals_in_statement(*stmt, fn);
+        }
+    }
+
+    void collect_locals_in_statement(const Statement& stmt, FunctionCode& fn) {
+        if (auto* block = dynamic_cast<const BlockStatement*>(&stmt)) {
+            for (const auto& s : block->body) {
+                collect_locals_in_statement(*s, fn);
+            }
+            return;
+        }
+        if (auto* decl = dynamic_cast<const VariableDeclaration*>(&stmt)) {
+            bool is_const = decl->kind == VariableDeclaration::Kind::Const;
+            for (const auto& var : decl->declarations) {
+                fn.add_local(var.id, is_const);
+            }
+            return;
+        }
+        if (auto* fn_decl = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
+            fn.add_local(fn_decl->name, true);
+            return;
+        }
+        if (auto* if_stmt = dynamic_cast<const IfStatement*>(&stmt)) {
+            collect_locals_in_statement(*if_stmt->consequent, fn);
+            if (if_stmt->alternate) {
+                collect_locals_in_statement(*if_stmt->alternate, fn);
+            }
+            return;
+        }
+        if (auto* while_stmt = dynamic_cast<const WhileStatement*>(&stmt)) {
+            collect_locals_in_statement(*while_stmt->body, fn);
+            return;
+        }
+        if (auto* do_while = dynamic_cast<const DoWhileStatement*>(&stmt)) {
+            collect_locals_in_statement(*do_while->body, fn);
+            return;
+        }
+        if (auto* for_stmt = dynamic_cast<const ForStatement*>(&stmt)) {
+            if (for_stmt->init_statement) collect_locals_in_statement(*for_stmt->init_statement, fn);
+            if (for_stmt->body) collect_locals_in_statement(*for_stmt->body, fn);
+            return;
+        }
+        if (auto* switch_stmt = dynamic_cast<const SwitchStatement*>(&stmt)) {
+            for (const auto& case_stmt : switch_stmt->cases) {
+                for (const auto& cons : case_stmt.consequent) {
+                    collect_locals_in_statement(*cons, fn);
+                }
+            }
+            return;
+        }
+        if (auto* try_stmt = dynamic_cast<const TryStatement*>(&stmt)) {
+            collect_locals_in_statement(*try_stmt->block, fn);
+            if (try_stmt->handler) {
+                if (!try_stmt->handler_param.empty()) {
+                    fn.add_local(try_stmt->handler_param, false);
+                }
+                collect_locals_in_statement(*try_stmt->handler, fn);
+            }
+            if (try_stmt->finalizer) {
+                collect_locals_in_statement(*try_stmt->finalizer, fn);
+            }
+            return;
+        }
+        if (auto* with_stmt = dynamic_cast<const WithStatement*>(&stmt)) {
+            collect_locals_in_statement(*with_stmt->body, fn);
+            return;
+        }
+        if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(&stmt)) {
+            // Expressions don't introduce locals for the outer function in this compiler
+            (void)expr_stmt;
+            return;
+        }
+    }
 
     // Helpers to emit
     u16 add_constant(FunctionCode& fn, const Value& value) {
@@ -58,6 +352,24 @@ private:
 
     void emit_u16(FunctionCode& fn, u16 v) {
         fn.chunk.write_u16(v);
+    }
+
+    // Emit GetProp with inline cache
+    void emit_get_prop_ic(FunctionCode& fn, const String& name) {
+        u16 name_idx = add_name(fn, name);
+        u16 cache_slot = fn.alloc_ic_slot();
+        emit(fn, OpCode::GetPropIC);
+        emit_u16(fn, name_idx);
+        emit_u16(fn, cache_slot);
+    }
+
+    // Emit SetProp with inline cache
+    void emit_set_prop_ic(FunctionCode& fn, const String& name) {
+        u16 name_idx = add_name(fn, name);
+        u16 cache_slot = fn.alloc_ic_slot();
+        emit(fn, OpCode::SetPropIC);
+        emit_u16(fn, name_idx);
+        emit_u16(fn, cache_slot);
     }
 
     void emit_constant(FunctionCode& fn, const Value& v) {
@@ -110,14 +422,35 @@ private:
 
         if (auto* decl = dynamic_cast<const VariableDeclaration*>(&stmt)) {
             for (const auto& var : decl->declarations) {
-                u16 name_idx = add_name(fn, var.id);
-                emit(fn, OpCode::DefineVar);
-                emit_u16(fn, name_idx);
-                emit_u8(fn, decl->kind == VariableDeclaration::Kind::Const ? 1 : 0);
-                if (var.init) {
-                    compile_expression(*var.init, fn);
-                    emit(fn, OpCode::SetVar);
+                auto local_slot = fn.resolve_local(var.id);
+                u16 name_idx = 0;
+                if (!local_slot) {
+                    name_idx = add_name(fn, var.id);
+                    emit(fn, OpCode::DefineVar);
                     emit_u16(fn, name_idx);
+                    emit_u8(fn, decl->kind == VariableDeclaration::Kind::Const ? 1 : 0);
+                }
+                if (local_slot) {
+                    emit(fn, OpCode::LoadUndefined);
+                    emit(fn, OpCode::SetLocal);
+                    emit_u16(fn, *local_slot);
+                }
+                if (var.init) {
+                    // Check if this is a new expression that can use stack allocation
+                    if (auto* new_expr = dynamic_cast<const NewExpression*>(var.init.get())) {
+                        if (m_escape_analyzer.can_stack_allocate(var.id)) {
+                            m_use_stack_alloc = true;
+                        }
+                    }
+                    compile_expression(*var.init, fn);
+                    m_use_stack_alloc = false;
+                    if (local_slot) {
+                        emit(fn, OpCode::SetLocal);
+                        emit_u16(fn, *local_slot);
+                    } else {
+                        emit(fn, OpCode::SetVar);
+                        emit_u16(fn, name_idx);
+                    }
                 }
             }
             return;
@@ -125,14 +458,20 @@ private:
 
         if (auto* fn_decl = dynamic_cast<const FunctionDeclaration*>(&stmt)) {
             u16 func_idx = compile_function(fn_decl->name, fn_decl->params, fn_decl->body, nullptr);
-            u16 name_idx = add_name(fn, fn_decl->name);
+            auto local_slot = fn.resolve_local(fn_decl->name);
+            u16 name_idx = local_slot ? 0 : add_name(fn, fn_decl->name);
             emit(fn, OpCode::MakeFunction);
             emit_u16(fn, func_idx);
-            emit(fn, OpCode::DefineVar);
-            emit_u16(fn, name_idx);
-            emit_u8(fn, 1); // const binding
-            emit(fn, OpCode::SetVar);
-            emit_u16(fn, name_idx);
+            if (local_slot) {
+                emit(fn, OpCode::SetLocal);
+                emit_u16(fn, *local_slot);
+            } else {
+                emit(fn, OpCode::DefineVar);
+                emit_u16(fn, name_idx);
+                emit_u8(fn, 1); // const binding
+                emit(fn, OpCode::SetVar);
+                emit_u16(fn, name_idx);
+            }
             return;
         }
 
@@ -364,12 +703,20 @@ private:
             if (try_stmt->handler) {
                 catch_ip = fn.chunk.size();
                 fn.chunk.patch_i16(handler_pos + 1, static_cast<i16>(catch_ip));
-                auto name_idx = add_name(fn, try_stmt->handler_param);
-                emit(fn, OpCode::DefineVar);
-                emit_u16(fn, name_idx);
-                emit_u8(fn, 0);
-                emit(fn, OpCode::SetVar);
-                emit_u16(fn, name_idx);
+                if (!try_stmt->handler_param.empty()) {
+                    auto local_slot = fn.resolve_local(try_stmt->handler_param);
+                    if (local_slot) {
+                        emit(fn, OpCode::SetLocal);
+                        emit_u16(fn, *local_slot);
+                    } else {
+                        auto name_idx = add_name(fn, try_stmt->handler_param);
+                        emit(fn, OpCode::DefineVar);
+                        emit_u16(fn, name_idx);
+                        emit_u8(fn, 0);
+                        emit(fn, OpCode::SetVar);
+                        emit_u16(fn, name_idx);
+                    }
+                }
                 compile_statement(*try_stmt->handler, fn, false);
                 after_try_jumps.push_back(emit_jump(fn, OpCode::Jump));
             }
@@ -432,9 +779,14 @@ private:
             return;
         }
         if (auto* id = dynamic_cast<const Identifier*>(&expr)) {
-            u16 name_idx = add_name(fn, id->name);
-            emit(fn, OpCode::GetVar);
-            emit_u16(fn, name_idx);
+            if (auto slot = fn.resolve_local(id->name)) {
+                emit(fn, OpCode::GetLocal);
+                emit_u16(fn, *slot);
+            } else {
+                u16 name_idx = add_name(fn, id->name);
+                emit(fn, OpCode::GetVar);
+                emit_u16(fn, name_idx);
+            }
             return;
         }
         if (auto* tpl = dynamic_cast<const TemplateLiteral*>(&expr)) {
@@ -479,9 +831,8 @@ private:
                     compile_expression(*prop.computed_key, fn);
                     emit(fn, OpCode::SetElem);
                 } else {
-                    u16 name_idx = add_name(fn, prop.key);
-                    emit(fn, OpCode::SetProp);
-                    emit_u16(fn, name_idx);
+                    // Use IC-enabled property access
+                    emit_set_prop_ic(fn, prop.key);
                 }
                 emit(fn, OpCode::Pop); // discard value
             }
@@ -495,9 +846,8 @@ private:
                     compile_expression(*member->property, fn);
                     emit(fn, OpCode::GetElem);
                 } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
-                    u16 name_idx = add_name(fn, pid->name);
-                    emit(fn, OpCode::GetProp);
-                    emit_u16(fn, name_idx);
+                    // Use IC-enabled property access
+                    emit_get_prop_ic(fn, pid->name);
                 }
                 usize end = emit_jump(fn, OpCode::Jump);
                 patch_jump(fn, nullish);
@@ -509,9 +859,8 @@ private:
                     compile_expression(*member->property, fn);
                     emit(fn, OpCode::GetElem);
                 } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
-                    u16 name_idx = add_name(fn, pid->name);
-                    emit(fn, OpCode::GetProp);
-                    emit_u16(fn, name_idx);
+                    // Use IC-enabled property access
+                    emit_get_prop_ic(fn, pid->name);
                 }
             }
             return;
@@ -544,7 +893,8 @@ private:
             for (const auto& arg : new_expr->arguments) {
                 compile_expression(*arg, fn);
             }
-            emit(fn, OpCode::New);
+            // Use stack allocation if escape analysis determined it's safe
+            emit(fn, m_use_stack_alloc ? OpCode::NewStack : OpCode::New);
             emit_u16(fn, static_cast<u16>(new_expr->arguments.size()));
             return;
         }
@@ -587,16 +937,27 @@ private:
         }
         if (auto* update = dynamic_cast<const UpdateExpression*>(&expr)) {
             if (auto* id = dynamic_cast<Identifier*>(update->argument.get())) {
-                u16 name_idx = add_name(fn, id->name);
-                emit(fn, OpCode::GetVar);
-                emit_u16(fn, name_idx);
+                auto local_slot = fn.resolve_local(id->name);
+                u16 name_idx = local_slot ? 0 : add_name(fn, id->name);
+                if (local_slot) {
+                    emit(fn, OpCode::GetLocal);
+                    emit_u16(fn, *local_slot);
+                } else {
+                    emit(fn, OpCode::GetVar);
+                    emit_u16(fn, name_idx);
+                }
                 if (!update->prefix) {
                     emit(fn, OpCode::Dup);
                 }
                 emit_constant(fn, Value(1.0));
                 emit(fn, update->op == UpdateExpression::Operator::Increment ? OpCode::Add : OpCode::Subtract);
-                emit(fn, OpCode::SetVar);
-                emit_u16(fn, name_idx);
+                if (local_slot) {
+                    emit(fn, OpCode::SetLocal);
+                    emit_u16(fn, *local_slot);
+                } else {
+                    emit(fn, OpCode::SetVar);
+                    emit_u16(fn, name_idx);
+                }
                 if (!update->prefix) {
                     emit(fn, OpCode::Pop);
                 }
@@ -694,18 +1055,29 @@ private:
         bool is_compound = expr.op != Op::Assign;
 
         if (auto* id = dynamic_cast<Identifier*>(expr.left.get())) {
-            u16 name_idx = add_name(fn, id->name);
+            auto local_slot = fn.resolve_local(id->name);
+            u16 name_idx = local_slot ? 0 : add_name(fn, id->name);
             if (is_compound) {
                 // Load current value first
-                emit(fn, OpCode::GetVar);
-                emit_u16(fn, name_idx);
+                if (local_slot) {
+                    emit(fn, OpCode::GetLocal);
+                    emit_u16(fn, *local_slot);
+                } else {
+                    emit(fn, OpCode::GetVar);
+                    emit_u16(fn, name_idx);
+                }
             }
             compile_expression(*expr.right, fn);
             if (is_compound) {
                 emit_compound_op(expr.op, fn);
             }
-            emit(fn, OpCode::SetVar);
-            emit_u16(fn, name_idx);
+            if (local_slot) {
+                emit(fn, OpCode::SetLocal);
+                emit_u16(fn, *local_slot);
+            } else {
+                emit(fn, OpCode::SetVar);
+                emit_u16(fn, name_idx);
+            }
             return;
         }
 
@@ -722,9 +1094,8 @@ private:
                     emit(fn, OpCode::GetElem);
                 } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
                     emit(fn, OpCode::Dup);   // Dup obj
-                    u16 name_idx = add_name(fn, pid->name);
-                    emit(fn, OpCode::GetProp);
-                    emit_u16(fn, name_idx);
+                    // Use IC-enabled property access
+                    emit_get_prop_ic(fn, pid->name);
                 }
             }
 
@@ -737,9 +1108,8 @@ private:
             if (member->computed) {
                 emit(fn, OpCode::SetElem);
             } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
-                u16 name_idx = add_name(fn, pid->name);
-                emit(fn, OpCode::SetProp);
-                emit_u16(fn, name_idx);
+                // Use IC-enabled property access
+                emit_set_prop_ic(fn, pid->name);
             }
             return;
         }
@@ -771,6 +1141,18 @@ private:
         auto fn = std::make_shared<FunctionCode>();
         fn->name = name;
         fn->params = params;
+        for (const auto& param : params) {
+            fn->add_local(param, false);
+        }
+        if (!concise_body) {
+            collect_locals(*fn, body);
+        }
+
+        // Run escape analysis before compilation
+        EscapeAnalyzer saved_analyzer = m_escape_analyzer;
+        if (!concise_body) {
+            m_escape_analyzer.analyze_function(body);
+        }
 
         if (concise_body) {
             compile_expression(*concise_body, *fn);
@@ -781,6 +1163,9 @@ private:
             emit(*fn, OpCode::Return);
         }
 
+        // Restore analyzer for outer function
+        m_escape_analyzer = saved_analyzer;
+
         m_functions.push_back(fn);
         return static_cast<u16>(m_functions.size() - 1);
     }
@@ -788,6 +1173,8 @@ private:
     std::vector<std::shared_ptr<FunctionCode>> m_functions;
     std::vector<String> m_errors;
     std::vector<LoopContext> m_loop_stack;
+    EscapeAnalyzer m_escape_analyzer;
+    bool m_use_stack_alloc{false};  // Flag for stack-allocating the next new expression
 };
 
 } // namespace

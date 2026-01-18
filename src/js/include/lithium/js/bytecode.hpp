@@ -4,6 +4,8 @@
 #include "lithium/core/types.hpp"
 #include "lithium/js/value.hpp"
 #include <memory>
+#include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace lithium::js {
@@ -29,12 +31,18 @@ enum class OpCode : u8 {
     DefineVar,      // u16 name_idx, u8 is_const
     GetVar,         // u16 name_idx
     SetVar,         // u16 name_idx
+    GetLocal,       // u16 slot_idx
+    SetLocal,       // u16 slot_idx
 
-    // Property access
+    // Property access (slow path, no IC)
     GetProp,        // u16 name_idx
     SetProp,        // u16 name_idx
     GetElem,
     SetElem,
+
+    // Property access with Inline Cache (fast path)
+    GetPropIC,      // u16 name_idx, u16 cache_slot
+    SetPropIC,      // u16 name_idx, u16 cache_slot
 
     // Arithmetic / comparison
     Add,
@@ -82,6 +90,7 @@ enum class OpCode : u8 {
     MakeFunction,   // u16 function_idx
     Call,           // u16 arg_count
     New,            // u16 arg_count (construct)
+    NewStack,       // u16 arg_count (construct with stack allocation - escape analysis)
     Return,         // no operand (uses top of stack or undefined)
 
     // This binding
@@ -89,7 +98,10 @@ enum class OpCode : u8 {
 
     // Dynamic scope helpers
     EnterWith,      // none (object on stack)
-    ExitWith        // none
+    ExitWith,       // none
+
+    // Must be last - used for dispatch table sizing
+    OpCode_COUNT
 };
 
 // ============================================================================
@@ -125,10 +137,49 @@ private:
 // Function & Module
 // ============================================================================
 
+// Forward declaration for IC
+struct InlineCacheEntry;
+
 struct FunctionCode {
     String name;
     std::vector<String> params;
     Chunk chunk;
+
+    // Inline cache slots for this function
+    u16 ic_slot_count{0};
+
+    // Local slots for parameters and variable declarations
+    u16 local_count{0};
+    std::vector<String> local_names;
+    std::vector<bool> local_is_const;
+    std::unordered_map<String, u16> local_slots;
+
+    std::optional<u16> resolve_local(const String& name) const {
+        auto it = local_slots.find(name);
+        if (it == local_slots.end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    }
+
+    u16 add_local(const String& name, bool is_const) {
+        auto it = local_slots.find(name);
+        if (it != local_slots.end()) {
+            auto idx = it->second;
+            if (is_const && idx < local_is_const.size()) {
+                local_is_const[idx] = true;
+            }
+            return idx;
+        }
+        u16 slot = local_count++;
+        local_slots.emplace(name, slot);
+        local_names.push_back(name);
+        local_is_const.push_back(is_const);
+        return slot;
+    }
+
+    // Allocate a new IC slot and return its index
+    u16 alloc_ic_slot() { return ic_slot_count++; }
 };
 
 struct ModuleBytecode {

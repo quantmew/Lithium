@@ -1,6 +1,7 @@
 #pragma once
 
 #include "value.hpp"
+#include "shape.hpp"
 #include <functional>
 #include <unordered_map>
 
@@ -10,19 +11,44 @@ class VM;
 class BoundFunction;
 
 // ============================================================================
-// Object - Base class for all JS objects
+// Inline Cache Entry - cached property access information
+// ============================================================================
+
+struct InlineCacheEntry {
+    u32 shape_id{0};      // Cached shape ID
+    i32 slot{-1};         // Cached slot index (-1 = not cached)
+    bool valid{false};    // Is this cache entry valid?
+
+    void invalidate() { valid = false; slot = -1; }
+};
+
+// ============================================================================
+// Object - Base class for all JS objects (with Shape-based property storage)
 // ============================================================================
 
 class Object {
 public:
+    Object();
     virtual ~Object() = default;
 
-    // Property access
+    // Property access (slow path - for compatibility)
     [[nodiscard]] virtual bool has_property(const String& name) const;
     [[nodiscard]] virtual Value get_property(const String& name) const;
     virtual void set_property(const String& name, const Value& value);
     virtual bool delete_property(const String& name);
-    [[nodiscard]] virtual bool has_own_property(const String& name) const { return m_properties.count(name) > 0; }
+    [[nodiscard]] virtual bool has_own_property(const String& name) const;
+
+    // Fast property access with inline caching
+    [[nodiscard]] Value get_property_cached(const String& name, InlineCacheEntry& cache) const;
+    void set_property_cached(const String& name, const Value& value, InlineCacheEntry& cache);
+
+    // Direct slot access (for IC fast path)
+    [[nodiscard]] Value get_slot(u32 slot) const;
+    void set_slot(u32 slot, const Value& value);
+
+    // Shape access for IC
+    [[nodiscard]] u32 shape_id() const { return m_shape ? m_shape->id() : 0; }
+    [[nodiscard]] ShapePtr shape() const { return m_shape; }
 
     // Element access (for arrays)
     [[nodiscard]] virtual bool has_element(u32 index) const;
@@ -41,16 +67,27 @@ public:
     [[nodiscard]] virtual bool is_callable() const { return false; }
     [[nodiscard]] virtual bool is_array() const { return false; }
 
+    // Stack allocation support (escape analysis)
+    [[nodiscard]] bool is_stack_allocated() const { return m_stack_allocated; }
+    void set_stack_allocated(bool val) { m_stack_allocated = val; }
+
     // GC stubs (no-op)
     virtual void mark() { m_marked = true; }
     void unmark() { m_marked = false; }
     [[nodiscard]] bool is_marked() const { return m_marked; }
-    virtual void trace() {}
+    virtual void trace();
 
 protected:
-    std::unordered_map<String, Value> m_properties;
+    // Shape-based property storage
+    ShapePtr m_shape;
+    std::vector<Value> m_slots;  // Dense property value storage
+
+    // Fallback for deleted/special properties
+    std::unordered_map<String, Value> m_overflow_properties;
+
     std::shared_ptr<Object> m_prototype;
     bool m_marked{false};
+    bool m_stack_allocated{false};
 };
 
 // ============================================================================
@@ -127,6 +164,23 @@ public:
 
 private:
     std::vector<Value> m_elements;
+};
+
+// ============================================================================
+// Date
+// ============================================================================
+
+class DateObject : public Object {
+public:
+    DateObject();
+    explicit DateObject(f64 ms_since_epoch);
+
+    [[nodiscard]] f64 time_value() const { return m_time; }
+    void set_time_value(f64 ms) { m_time = ms; }
+    [[nodiscard]] String string_value() const;
+
+private:
+    f64 m_time{0.0};
 };
 
 } // namespace lithium::js

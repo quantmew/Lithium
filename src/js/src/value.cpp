@@ -1,9 +1,10 @@
 /**
- * JavaScript Value implementation
+ * JavaScript Value implementation with NaN-Boxing
  */
 
 #include "lithium/js/value.hpp"
 #include "lithium/js/object.hpp"
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <limits>
@@ -12,51 +13,120 @@
 namespace lithium::js {
 
 // ============================================================================
+// Reference counting for NaN-boxed pointers
+// ============================================================================
+
+// We use intrusive reference counting for strings stored in NaN-boxed values.
+// Objects use shared_ptr internally, but we store raw pointers and manually
+// increment/decrement the control block.
+
+// String reference count storage (we wrap String with a ref count)
+struct RefCountedString {
+    std::atomic<u32> ref_count{1};
+    String str;
+
+    explicit RefCountedString(const String& s) : str(s) {}
+    explicit RefCountedString(String&& s) : str(std::move(s)) {}
+};
+
+// Object wrapper for reference counting
+struct RefCountedObject {
+    std::atomic<u32> ref_count{1};
+    std::shared_ptr<Object> obj;
+
+    explicit RefCountedObject(std::shared_ptr<Object> o) : obj(std::move(o)) {}
+    explicit RefCountedObject(Object* o) : obj(o, [](Object*){}) {}
+};
+
+// inc_ref/dec_ref are only called when is_heap_type() returns true
+// so we skip the redundant type check here
+
+void Value::inc_ref() const {
+    // Both RefCountedString and RefCountedObject have ref_count at offset 0
+    auto* ref = reinterpret_cast<std::atomic<u32>*>(m_bits & PAYLOAD_MASK);
+    ref->fetch_add(1, std::memory_order_relaxed);
+}
+
+void Value::dec_ref() const {
+    void* ptr = reinterpret_cast<void*>(m_bits & PAYLOAD_MASK);
+    auto* ref = reinterpret_cast<std::atomic<u32>*>(ptr);
+    if (ref->fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        // Delete based on tag
+        if ((m_bits & TAG_MASK) == TAG_STRING) {
+            delete reinterpret_cast<RefCountedString*>(ptr);
+        } else {
+            delete reinterpret_cast<RefCountedObject*>(ptr);
+        }
+    }
+}
+
+// ============================================================================
 // Value constructors
 // ============================================================================
 
-Value::Value() : m_type(ValueType::Undefined) {}
-
-Value::Value(std::nullptr_t) : m_type(ValueType::Null) {}
-
-Value::Value(bool b) : m_type(ValueType::Boolean) {
-    m_primitive.boolean = b;
+Value::Value(const char* s) {
+    auto* rcs = new RefCountedString(String(s));
+    m_bits = make_tagged_ptr(TAG_STRING, rcs);
 }
 
-Value::Value(f64 n) : m_type(ValueType::Number) {
-    m_primitive.number = n;
+Value::Value(const String& s) {
+    auto* rcs = new RefCountedString(s);
+    m_bits = make_tagged_ptr(TAG_STRING, rcs);
 }
 
-Value::Value(i32 n) : m_type(ValueType::Number) {
-    m_primitive.number = static_cast<f64>(n);
+Value::Value(String* s) {
+    auto* rcs = new RefCountedString(std::move(*s));
+    delete s;
+    m_bits = make_tagged_ptr(TAG_STRING, rcs);
 }
 
-Value::Value(const char* s) : m_type(ValueType::String) {
-    m_string = std::make_shared<String>(s);
+Value::Value(Object* obj) {
+    if (obj) {
+        auto* rco = new RefCountedObject(obj);
+        m_bits = make_tagged_ptr(TAG_OBJECT, rco);
+    } else {
+        m_bits = NULL_BITS;
+    }
 }
 
-Value::Value(const String& s) : m_type(ValueType::String) {
-    m_string = std::make_shared<String>(s);
+Value::Value(std::shared_ptr<Object> obj) {
+    if (obj) {
+        auto* rco = new RefCountedObject(std::move(obj));
+        m_bits = make_tagged_ptr(TAG_OBJECT, rco);
+    } else {
+        m_bits = NULL_BITS;
+    }
 }
 
-Value::Value(Object* obj) : m_type(ValueType::Object) {
-    m_object = std::shared_ptr<Object>(obj, [](Object*) {});
-}
-
-Value::Value(std::shared_ptr<Object> obj) : m_type(ValueType::Object) {
-    m_object = std::move(obj);
-}
+// Copy/Move semantics are now inline in the header for better optimization
 
 // ============================================================================
 // Type checking
 // ============================================================================
+
+ValueType Value::type() const {
+    if (is_double()) return ValueType::Number;
+
+    u64 tag = (m_bits & TAG_MASK) >> TAG_SHIFT;
+    switch (tag) {
+        case 0: return ValueType::Undefined;
+        case 1: return ValueType::Null;
+        case 2: return ValueType::Boolean;
+        case 3: return ValueType::Number;  // Integer
+        case 4: return ValueType::String;
+        case 5: return ValueType::Object;
+        default: return ValueType::Undefined;
+    }
+}
 
 bool Value::is_function() const {
     return is_callable();
 }
 
 bool Value::is_callable() const {
-    return is_object() && m_object && m_object->is_callable();
+    if (!is_object()) return false;
+    auto* obj = as_object();
+    return obj && obj->is_callable();
 }
 
 bool Value::is_native_function() const {
@@ -71,33 +141,33 @@ bool Value::is_array() const {
 // Value access
 // ============================================================================
 
-bool Value::as_boolean() const {
-    if (m_type != ValueType::Boolean) {
-        return false;
-    }
-    return m_primitive.boolean;
-}
-
 f64 Value::as_number() const {
-    if (m_type != ValueType::Number) {
-        return std::numeric_limits<f64>::quiet_NaN();
+    if (is_double()) {
+        f64 result;
+        std::memcpy(&result, &m_bits, sizeof(f64));
+        return result;
     }
-    return m_primitive.number;
+    if (is_integer()) {
+        // Extract i32 from lower 32 bits
+        i32 val = static_cast<i32>(m_bits & 0xFFFFFFFF);
+        return static_cast<f64>(val);
+    }
+    return std::numeric_limits<f64>::quiet_NaN();
 }
 
 const String& Value::as_string() const {
     static String empty;
-    if (m_type != ValueType::String || !m_string) {
-        return empty;
-    }
-    return *m_string;
+    if (!is_string()) return empty;
+    auto* rcs = get_pointer<RefCountedString>();
+    if (!rcs) return empty;
+    return rcs->str;
 }
 
 Object* Value::as_object() const {
-    if (m_type != ValueType::Object) {
-        return nullptr;
-    }
-    return m_object.get();
+    if (!is_object()) return nullptr;
+    auto* rco = get_pointer<RefCountedObject>();
+    if (!rco) return nullptr;
+    return rco->obj.get();
 }
 
 NativeFunction* Value::as_native_function() const {
@@ -109,68 +179,62 @@ NativeFunction* Value::as_native_function() const {
 // ============================================================================
 
 bool Value::to_boolean() const {
-    switch (m_type) {
-        case ValueType::Undefined:
-        case ValueType::Null:
-            return false;
-        case ValueType::Boolean:
-            return m_primitive.boolean;
-        case ValueType::Number:
-            return m_primitive.number != 0 && !std::isnan(m_primitive.number);
-        case ValueType::String:
-            return m_string && !m_string->empty();
-        case ValueType::Object:
-            return m_object != nullptr;
-        default:
-            return false;
+    if (is_undefined() || is_null()) return false;
+    if (is_boolean()) return as_boolean();
+    if (is_number()) {
+        f64 n = as_number();
+        return n != 0 && !std::isnan(n);
     }
+    if (is_string()) {
+        return !as_string().empty();
+    }
+    if (is_object()) {
+        return as_object() != nullptr;
+    }
+    return false;
 }
 
 f64 Value::to_number() const {
-    switch (m_type) {
-        case ValueType::Undefined:
-            return std::numeric_limits<f64>::quiet_NaN();
-        case ValueType::Null:
-            return 0.0;
-        case ValueType::Boolean:
-            return m_primitive.boolean ? 1.0 : 0.0;
-        case ValueType::Number:
-            return m_primitive.number;
-        case ValueType::String: {
-            if (!m_string) {
+    if (is_undefined()) return std::numeric_limits<f64>::quiet_NaN();
+    if (is_null()) return 0.0;
+    if (is_boolean()) return as_boolean() ? 1.0 : 0.0;
+    if (is_number()) return as_number();
+    if (is_string()) {
+        const auto& str = as_string();
+        if (str.empty()) return 0.0;
+
+        bool seen_digit = false;
+        bool seen_dot = false;
+        for (usize i = 0; i < str.length(); ++i) {
+            char ch = str[i];
+            if (i == 0 && (ch == '+' || ch == '-')) {
+                continue;
+            }
+            if (ch == '.' && !seen_dot) {
+                seen_dot = true;
+                continue;
+            }
+            if (!std::isdigit(static_cast<unsigned char>(ch))) {
                 return std::numeric_limits<f64>::quiet_NaN();
             }
-            const auto& str = *m_string;
-            bool seen_digit = false;
-            bool seen_dot = false;
-            for (usize i = 0; i < str.length(); ++i) {
-                char ch = str[i];
-                if (i == 0 && (ch == '+' || ch == '-')) {
-                    continue;
-                }
-                if (ch == '.' && !seen_dot) {
-                    seen_dot = true;
-                    continue;
-                }
-                if (!std::isdigit(static_cast<unsigned char>(ch))) {
-                    return std::numeric_limits<f64>::quiet_NaN();
-                }
-                seen_digit = true;
-            }
-            if (!seen_digit) {
-                return std::numeric_limits<f64>::quiet_NaN();
-            }
-            try {
-                return std::stod(str.std_string());
-            } catch (...) {
-                return std::numeric_limits<f64>::quiet_NaN();
-            }
+            seen_digit = true;
         }
-        case ValueType::Object:
+        if (!seen_digit) {
             return std::numeric_limits<f64>::quiet_NaN();
-        default:
+        }
+        try {
+            return std::stod(str.std_string());
+        } catch (...) {
             return std::numeric_limits<f64>::quiet_NaN();
+        }
     }
+    if (is_object()) {
+        if (auto* date = dynamic_cast<DateObject*>(as_object())) {
+            return date->time_value();
+        }
+        return std::numeric_limits<f64>::quiet_NaN();
+    }
+    return std::numeric_limits<f64>::quiet_NaN();
 }
 
 i32 Value::to_int32() const {
@@ -192,31 +256,25 @@ u32 Value::to_uint32() const {
 }
 
 String Value::to_string() const {
-    switch (m_type) {
-        case ValueType::Undefined:
-            return "undefined"_s;
-        case ValueType::Null:
-            return "null"_s;
-        case ValueType::Boolean:
-            return m_primitive.boolean ? "true"_s : "false"_s;
-        case ValueType::Number: {
-            if (std::isnan(m_primitive.number)) {
-                return "NaN"_s;
-            }
-            if (std::isinf(m_primitive.number)) {
-                return m_primitive.number > 0 ? "Infinity"_s : "-Infinity"_s;
-            }
-            std::ostringstream oss;
-            oss << m_primitive.number;
-            return String(oss.str());
-        }
-        case ValueType::String:
-            return m_string ? *m_string : String();
-        case ValueType::Object:
-            return "[object Object]"_s;
-        default:
-            return ""_s;
+    if (is_undefined()) return "undefined"_s;
+    if (is_null()) return "null"_s;
+    if (is_boolean()) return as_boolean() ? "true"_s : "false"_s;
+    if (is_number()) {
+        f64 n = as_number();
+        if (std::isnan(n)) return "NaN"_s;
+        if (std::isinf(n)) return n > 0 ? "Infinity"_s : "-Infinity"_s;
+        std::ostringstream oss;
+        oss << n;
+        return String(oss.str());
     }
+    if (is_string()) return as_string();
+    if (is_object()) {
+        if (auto* date = dynamic_cast<DateObject*>(as_object())) {
+            return date->string_value();
+        }
+        return "[object Object]"_s;
+    }
+    return ""_s;
 }
 
 // ============================================================================
@@ -224,33 +282,44 @@ String Value::to_string() const {
 // ============================================================================
 
 bool Value::strict_equals(const Value& other) const {
-    if (m_type != other.m_type) {
+    // Fast path: identical bit patterns
+    if (m_bits == other.m_bits) {
+        // But NaN !== NaN
+        if (is_double()) {
+            f64 n = as_number();
+            return !std::isnan(n);
+        }
+        return true;
+    }
+
+    // Different types can't be strictly equal (with one exception: integer vs double)
+    if (type() != other.type()) {
+        // Check if one is integer and other is double with same value
+        if (is_number() && other.is_number()) {
+            return as_number() == other.as_number();
+        }
         return false;
     }
 
-    switch (m_type) {
-        case ValueType::Undefined:
-        case ValueType::Null:
-            return true;
-        case ValueType::Boolean:
-            return m_primitive.boolean == other.m_primitive.boolean;
+    // Same type, different bits
+    switch (type()) {
         case ValueType::Number: {
-            if (std::isnan(m_primitive.number) || std::isnan(other.m_primitive.number)) {
-                return false;
-            }
-            return m_primitive.number == other.m_primitive.number;
+            f64 a = as_number();
+            f64 b = other.as_number();
+            if (std::isnan(a) || std::isnan(b)) return false;
+            return a == b;
         }
         case ValueType::String:
-            return m_string && other.m_string && *m_string == *other.m_string;
+            return as_string() == other.as_string();
         case ValueType::Object:
-            return m_object.get() == other.m_object.get();
+            return as_object() == other.as_object();
         default:
             return false;
     }
 }
 
 bool Value::loose_equals(const Value& other) const {
-    if (m_type == other.m_type) {
+    if (type() == other.type()) {
         return strict_equals(other);
     }
 
@@ -259,10 +328,10 @@ bool Value::loose_equals(const Value& other) const {
     }
 
     if (is_number() && other.is_string()) {
-        return m_primitive.number == other.to_number();
+        return as_number() == other.to_number();
     }
     if (is_string() && other.is_number()) {
-        return to_number() == other.m_primitive.number;
+        return to_number() == other.as_number();
     }
 
     if (is_boolean()) {
@@ -287,25 +356,16 @@ bool Value::loose_equals(const Value& other) const {
 // ============================================================================
 
 String Value::typeof_string() const {
-    switch (m_type) {
-        case ValueType::Undefined:
-            return "undefined"_s;
-        case ValueType::Null:
-            return "object"_s;
-        case ValueType::Boolean:
-            return "boolean"_s;
-        case ValueType::Number:
-            return "number"_s;
-        case ValueType::String:
-            return "string"_s;
-        case ValueType::Object:
-            if (is_function()) {
-                return "function"_s;
-            }
-            return "object"_s;
-        default:
-            return "undefined"_s;
+    if (is_undefined()) return "undefined"_s;
+    if (is_null()) return "object"_s;
+    if (is_boolean()) return "boolean"_s;
+    if (is_number()) return "number"_s;
+    if (is_string()) return "string"_s;
+    if (is_object()) {
+        if (is_function()) return "function"_s;
+        return "object"_s;
     }
+    return "undefined"_s;
 }
 
 // ============================================================================
@@ -314,40 +374,36 @@ String Value::typeof_string() const {
 
 String Value::debug_string() const {
     std::ostringstream oss;
-    switch (m_type) {
-        case ValueType::Undefined:
-            oss << "undefined";
-            break;
-        case ValueType::Null:
-            oss << "null";
-            break;
-        case ValueType::Boolean:
-            oss << (m_primitive.boolean ? "true" : "false");
-            break;
-        case ValueType::Number:
-            oss << m_primitive.number;
-            break;
-        case ValueType::String:
-            oss << "\"" << (m_string ? m_string->data() : "") << "\"";
-            break;
-        case ValueType::Object:
-            if (is_function()) {
-                oss << "[Function]";
-            } else if (is_array()) {
-                oss << "[Array]";
-            } else {
-                oss << "[Object]";
-            }
-            break;
-        default:
-            oss << "[unknown]";
+    if (is_undefined()) {
+        oss << "undefined";
+    } else if (is_null()) {
+        oss << "null";
+    } else if (is_boolean()) {
+        oss << (as_boolean() ? "true" : "false");
+    } else if (is_number()) {
+        oss << as_number();
+    } else if (is_string()) {
+        oss << "\"" << as_string().data() << "\"";
+    } else if (is_object()) {
+        if (dynamic_cast<DateObject*>(as_object())) {
+            oss << "[Date " << as_number() << "]";
+        } else if (is_function()) {
+            oss << "[Function]";
+        } else if (is_array()) {
+            oss << "[Array]";
+        } else {
+            oss << "[Object]";
+        }
+    } else {
+        oss << "[unknown]";
     }
     return String(oss.str());
 }
 
 void Value::mark() const {
-    if (is_object() && m_object) {
-        m_object->mark();
+    if (is_object()) {
+        auto* obj = as_object();
+        if (obj) obj->mark();
     }
 }
 

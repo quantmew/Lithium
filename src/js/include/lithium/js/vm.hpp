@@ -49,6 +49,9 @@ public:
         void define(const String& name, Value value, bool is_const);
         bool assign(const String& name, const Value& value);
         [[nodiscard]] std::optional<Binding> get(const String& name) const;
+        void bind_function(const std::shared_ptr<FunctionCode>& function);
+        [[nodiscard]] Value get_local(u16 slot) const;
+        bool set_local(u16 slot, const Value& value);
 
         [[nodiscard]] std::shared_ptr<Environment> parent() const { return m_parent; }
         [[nodiscard]] bool is_with_env() const { return m_with_object.has_value(); }
@@ -57,6 +60,9 @@ public:
     private:
         std::shared_ptr<Environment> m_parent;
         std::unordered_map<String, Binding> m_values;
+        std::vector<Value> m_locals;
+        std::vector<bool> m_local_is_const;
+        std::shared_ptr<FunctionCode> m_function;
         std::optional<Value> m_with_object;
         std::shared_ptr<Object> m_global_object;
         bool m_is_global{false};
@@ -67,9 +73,20 @@ public:
     struct CallFrame {
         std::shared_ptr<FunctionCode> function;
         std::shared_ptr<Environment> env;
+        std::shared_ptr<Environment> lexical_env;
         usize ip{0};
         usize stack_base{0};
         Value receiver;
+
+        // Inline cache for this function invocation
+        std::vector<InlineCacheEntry> ic_cache;
+
+        // Initialize IC cache with proper size
+        void init_ic_cache() {
+            if (function && function->ic_slot_count > 0) {
+                ic_cache.resize(function->ic_slot_count);
+            }
+        }
     };
 
     struct ExceptionHandler {

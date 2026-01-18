@@ -1,15 +1,33 @@
 /**
  * JavaScript VM - bytecode interpreter with lexical environments
+ *
+ * Optimizations:
+ * - Computed Goto (Direct Threading) for ~20-30% faster opcode dispatch
+ * - Inline Caching for property access
+ * - Shape-based hidden classes for objects
  */
 
 #include "lithium/js/vm.hpp"
 #include "lithium/js/compiler.hpp"
 #include "lithium/js/parser.hpp"
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+
+// ============================================================================
+// Computed Goto (Direct Threading) Dispatch
+// ============================================================================
+// GCC/Clang extension for faster opcode dispatch. Each opcode handler ends
+// with a direct jump to the next handler, eliminating switch overhead.
+
+#if defined(__GNUC__) || defined(__clang__)
+    #define USE_COMPUTED_GOTO 1
+#else
+    #define USE_COMPUTED_GOTO 0
+#endif
 
 namespace lithium::js {
 
@@ -30,6 +48,12 @@ public:
 private:
     Value m_value;
 };
+
+f64 current_time_millis() {
+    using namespace std::chrono;
+    auto now = system_clock::now().time_since_epoch();
+    return static_cast<f64>(duration_cast<milliseconds>(now).count());
+}
 
 } // namespace
 
@@ -65,7 +89,50 @@ VM::Environment::Environment(std::shared_ptr<Environment> parent, Value with_obj
     }
 }
 
+void VM::Environment::bind_function(const std::shared_ptr<FunctionCode>& function) {
+    m_function = function;
+    if (m_function) {
+        m_locals.assign(m_function->local_count, Value::undefined());
+        m_local_is_const = m_function->local_is_const;
+    } else {
+        m_locals.clear();
+        m_local_is_const.clear();
+    }
+}
+
+Value VM::Environment::get_local(u16 slot) const {
+    if (slot >= m_locals.size()) {
+        return Value::undefined();
+    }
+    return m_locals[slot];
+}
+
+bool VM::Environment::set_local(u16 slot, const Value& value) {
+    if (slot >= m_locals.size()) {
+        return false;
+    }
+    bool is_const = slot < m_local_is_const.size() ? m_local_is_const[slot] : false;
+    if (is_const && !m_locals[slot].is_undefined() && !value.is_undefined()) {
+        return false;
+    }
+    m_locals[slot] = value;
+    if (m_is_global && m_global_object && m_function && slot < m_function->local_names.size()) {
+        m_global_object->set_property(m_function->local_names[slot], value);
+    }
+    return true;
+}
+
 void VM::Environment::define(const String& name, Value value, bool is_const) {
+    if (m_function) {
+        if (auto slot = m_function->resolve_local(name)) {
+            if (slot.value() >= m_local_is_const.size()) {
+                m_local_is_const.resize(slot.value() + 1, false);
+            }
+            m_local_is_const[slot.value()] = m_local_is_const[slot.value()] || is_const;
+            set_local(slot.value(), value);
+            return;
+        }
+    }
     m_values[name] = Binding{std::move(value), is_const};
     if (m_is_global && m_global_object) {
         m_global_object->set_property(name, m_values[name].value);
@@ -77,6 +144,12 @@ bool VM::Environment::assign(const String& name, const Value& value) {
         auto* obj = m_with_object->as_object();
         obj->set_property(name, value);
         return true;
+    }
+
+    if (m_function) {
+        if (auto slot = m_function->resolve_local(name)) {
+            return set_local(slot.value(), value);
+        }
     }
 
     auto it = m_values.find(name);
@@ -105,6 +178,14 @@ std::optional<VM::Binding> VM::Environment::get(const String& name) const {
         auto* obj = m_with_object->as_object();
         if (obj->has_property(name)) {
             return Binding{obj->get_property(name), false};
+        }
+    }
+
+    if (m_function) {
+        if (auto slot = m_function->resolve_local(name)) {
+            Value val = get_local(slot.value());
+            bool is_const = slot.value() < m_local_is_const.size() ? m_local_is_const[slot.value()] : false;
+            return Binding{val, is_const};
         }
     }
 
@@ -291,6 +372,53 @@ void VM::init_builtins() {
     }, 1));
     install_global("JSON"_s, Value(json), true);
 
+    // Date object (minimal - time value and basic stringification)
+    auto date_proto = std::make_shared<DateObject>();
+    date_proto->set_prototype(m_object_prototype);
+
+    auto date_ctor = make_fn("Date"_s, [date_proto](VM&, const std::vector<Value>& args) -> Value {
+        f64 timestamp = args.empty() ? current_time_millis() : args[0].to_number();
+        auto date = std::make_shared<DateObject>(timestamp);
+        date->set_prototype(date_proto);
+        return Value(date);
+    }, 1);
+
+    date_proto->set_property("valueOf"_s, make_fn("valueOf"_s, [](VM& vm, const std::vector<Value>&) -> Value {
+        auto receiver = vm.current_this();
+        auto* date = receiver.as<DateObject>();
+        if (!date) {
+            return Value::undefined();
+        }
+        return Value(date->time_value());
+    }, 0));
+
+    date_proto->set_property("getTime"_s, make_fn("getTime"_s, [](VM& vm, const std::vector<Value>&) -> Value {
+        auto receiver = vm.current_this();
+        auto* date = receiver.as<DateObject>();
+        if (!date) {
+            return Value::undefined();
+        }
+        return Value(date->time_value());
+    }, 0));
+
+    date_proto->set_property("toString"_s, make_fn("toString"_s, [](VM& vm, const std::vector<Value>&) -> Value {
+        auto receiver = vm.current_this();
+        auto* date = receiver.as<DateObject>();
+        if (!date) {
+            return Value("Invalid Date"_s);
+        }
+        return Value(date->string_value());
+    }, 0));
+
+    if (auto* ctor_obj = date_ctor.as_object()) {
+        ctor_obj->set_property("prototype"_s, Value(date_proto));
+        ctor_obj->set_property("now"_s, make_fn("now"_s, [](VM&, const std::vector<Value>&) -> Value {
+            return Value(current_time_millis());
+        }, 0));
+    }
+    date_proto->set_property("constructor"_s, date_ctor);
+    install_global("Date"_s, date_ctor, true);
+
     // Basic globals
     install_global("globalThis"_s, Value(m_global_object), true);
 }
@@ -371,59 +499,112 @@ VM::InterpretResult VM::interpret(const String& source) {
     m_handlers.clear();
 
     auto entry_fn = m_module.functions[m_module.entry];
+    m_global_env->bind_function(entry_fn);
     auto frame_env = m_global_env;
-    m_frames.push_back(CallFrame{entry_fn, frame_env, 0, 0, Value::undefined()});
+    m_frames.push_back(CallFrame{entry_fn, frame_env, frame_env, 0, 0, Value::undefined(), {}});
+    m_frames.back().init_ic_cache();
 
     try {
+#if USE_COMPUTED_GOTO
+        // ====================================================================
+        // Computed Goto Dispatch Table
+        // ====================================================================
+        // Direct threading: each handler jumps directly to the next handler
+        // without going through a central dispatch point.
+        static void* dispatch_table[] = {
+            &&op_LoadConst, &&op_LoadNull, &&op_LoadUndefined, &&op_LoadTrue,
+            &&op_LoadFalse, &&op_Pop, &&op_Dup, &&op_Dup2, &&op_DefineVar,
+            &&op_GetVar, &&op_SetVar, &&op_GetLocal, &&op_SetLocal, &&op_GetProp,
+            &&op_SetProp, &&op_GetElem, &&op_SetElem, &&op_GetPropIC, &&op_SetPropIC,
+            &&op_Add, &&op_Subtract, &&op_Multiply, &&op_Divide, &&op_Modulo,
+            &&op_Exponent, &&op_LeftShift, &&op_RightShift, &&op_UnsignedRightShift,
+            &&op_BitwiseAnd, &&op_BitwiseOr, &&op_BitwiseXor, &&op_BitwiseNot,
+            &&op_Negate, &&op_StrictEqual, &&op_StrictNotEqual, &&op_LessThan,
+            &&op_LessEqual, &&op_GreaterThan, &&op_GreaterEqual, &&op_Instanceof,
+            &&op_In, &&op_Typeof, &&op_Void, &&op_LogicalNot, &&op_Jump,
+            &&op_JumpIfFalse, &&op_JumpIfNullish, &&op_Throw, &&op_PushHandler,
+            &&op_PopHandler, &&op_MakeArray, &&op_ArrayPush, &&op_ArraySpread,
+            &&op_MakeObject, &&op_ObjectSpread, &&op_MakeFunction, &&op_Call,
+            &&op_New, &&op_NewStack, &&op_Return, &&op_This, &&op_EnterWith,
+            &&op_ExitWith,
+        };
+
+        // Note: We use a pointer because references cannot be reseated when
+        // frames change (Call/Return). The pointer is updated on each dispatch.
+        CallFrame* frame_ptr = &m_frames.back();
+        #define frame (*frame_ptr)
+
+        #define VM_DISPATCH() do { \
+            if (m_frames.empty()) goto vm_exit; \
+            frame_ptr = &m_frames.back(); \
+            if (frame.ip >= frame.function->chunk.size()) \
+                throw RuntimeError("Instruction pointer out of range"_s); \
+            goto *dispatch_table[frame.function->chunk.read(frame.ip++)]; \
+        } while(0)
+
+        #define VM_CASE(name) op_##name
+        #define VM_NEXT() VM_DISPATCH()
+
+        // Initial dispatch
+        goto *dispatch_table[frame.function->chunk.read(frame.ip++)];
+
+#else
+        // ====================================================================
+        // Switch-Case Dispatch (fallback for non-GCC/Clang compilers)
+        // ====================================================================
+        #define VM_CASE(name) case OpCode::name
+        #define VM_NEXT() break
+
         while (!m_frames.empty()) {
             auto& frame = m_frames.back();
             if (frame.ip >= frame.function->chunk.size()) {
                 throw RuntimeError("Instruction pointer out of range"_s);
             }
-
             OpCode op = static_cast<OpCode>(frame.function->chunk.read(frame.ip++));
             switch (op) {
-                case OpCode::LoadConst: {
+#endif
+
+                VM_CASE(LoadConst): {
                     u16 idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     push(read_constant(frame, idx));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::LoadNull:
+                VM_CASE(LoadNull):
                     push(Value(nullptr));
-                    break;
-                case OpCode::LoadUndefined:
+                    VM_NEXT();
+                VM_CASE(LoadUndefined):
                     push(Value::undefined());
-                    break;
-                case OpCode::LoadTrue:
+                    VM_NEXT();
+                VM_CASE(LoadTrue):
                     push(Value(true));
-                    break;
-                case OpCode::LoadFalse:
+                    VM_NEXT();
+                VM_CASE(LoadFalse):
                     push(Value(false));
-                    break;
-                case OpCode::Pop:
+                    VM_NEXT();
+                VM_CASE(Pop):
                     pop();
-                    break;
-                case OpCode::Dup:
+                    VM_NEXT();
+                VM_CASE(Dup):
                     push(peek());
-                    break;
-                case OpCode::Dup2: {
+                    VM_NEXT();
+                VM_CASE(Dup2): {
                     // Duplicate top two values: [a, b] -> [a, b, a, b]
                     Value b = peek(0);
                     Value a = peek(1);
                     push(a);
                     push(b);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::DefineVar: {
+                VM_CASE(DefineVar): {
                     u16 name_idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     bool is_const = frame.function->chunk.read(frame.ip++) != 0;
                     auto name = read_constant(frame, name_idx).to_string();
                     frame.env->define(name, Value::undefined(), is_const);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::GetVar: {
+                VM_CASE(GetVar): {
                     u16 name_idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     auto name = read_constant(frame, name_idx).to_string();
@@ -432,9 +613,9 @@ VM::InterpretResult VM::interpret(const String& source) {
                         runtime_error("Undefined variable: "_s + name);
                     }
                     push(binding->value);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::SetVar: {
+                VM_CASE(SetVar): {
                     u16 name_idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     auto name = read_constant(frame, name_idx).to_string();
@@ -443,9 +624,47 @@ VM::InterpretResult VM::interpret(const String& source) {
                         runtime_error("Assignment to undeclared or const variable: "_s + name);
                     }
                     push(val);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::GetProp: {
+                VM_CASE(GetLocal): {
+                    u16 slot = frame.function->chunk.read_u16(frame.ip);
+                    frame.ip += 2;
+                    if (slot >= frame.function->local_names.size()) {
+                        runtime_error("Invalid local slot"_s);
+                    }
+                    if (frame.env->is_with_env()) {
+                        const auto& name = frame.function->local_names[slot];
+                        auto binding = frame.env->get(name);
+                        if (!binding) {
+                            runtime_error("Undefined variable: "_s + name);
+                        }
+                        push(binding->value);
+                    } else {
+                        push(frame.lexical_env->get_local(slot));
+                    }
+                    VM_NEXT();
+                }
+                VM_CASE(SetLocal): {
+                    u16 slot = frame.function->chunk.read_u16(frame.ip);
+                    frame.ip += 2;
+                    if (slot >= frame.function->local_names.size()) {
+                        runtime_error("Invalid local slot"_s);
+                    }
+                    Value val = pop();
+                    const auto& name = frame.function->local_names[slot];
+                    if (frame.env->is_with_env()) {
+                        if (!frame.env->assign(name, val)) {
+                            runtime_error("Assignment to undeclared or const variable: "_s + name);
+                        }
+                    } else {
+                        if (!frame.lexical_env->set_local(slot, val)) {
+                            runtime_error("Assignment to undeclared or const variable: "_s + name);
+                        }
+                    }
+                    push(val);
+                    VM_NEXT();
+                }
+                VM_CASE(GetProp): {
                     u16 name_idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     auto name = read_constant(frame, name_idx).to_string();
@@ -458,9 +677,9 @@ VM::InterpretResult VM::interpret(const String& source) {
                         prop = Value(std::make_shared<BoundFunction>(prop, obj));
                     }
                     push(prop);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::SetProp: {
+                VM_CASE(SetProp): {
                     u16 name_idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     auto name = read_constant(frame, name_idx).to_string();
@@ -471,9 +690,45 @@ VM::InterpretResult VM::interpret(const String& source) {
                     }
                     obj.as_object()->set_property(name, val);
                     push(val);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::GetElem: {
+                VM_CASE(GetPropIC): {
+                    u16 name_idx = frame.function->chunk.read_u16(frame.ip);
+                    frame.ip += 2;
+                    u16 cache_slot = frame.function->chunk.read_u16(frame.ip);
+                    frame.ip += 2;
+                    auto name = read_constant(frame, name_idx).to_string();
+                    Value obj = pop();
+                    if (!obj.is_object()) {
+                        runtime_error("Cannot get property of non-object"_s);
+                    }
+                    // Use inline cache for fast property access
+                    InlineCacheEntry& cache = frame.ic_cache[cache_slot];
+                    Value prop = obj.as_object()->get_property_cached(name, cache);
+                    if (prop.is_callable()) {
+                        prop = Value(std::make_shared<BoundFunction>(prop, obj));
+                    }
+                    push(prop);
+                    VM_NEXT();
+                }
+                VM_CASE(SetPropIC): {
+                    u16 name_idx = frame.function->chunk.read_u16(frame.ip);
+                    frame.ip += 2;
+                    u16 cache_slot = frame.function->chunk.read_u16(frame.ip);
+                    frame.ip += 2;
+                    auto name = read_constant(frame, name_idx).to_string();
+                    Value val = pop();
+                    Value obj = pop();
+                    if (!obj.is_object()) {
+                        runtime_error("Cannot set property of non-object"_s);
+                    }
+                    // Use inline cache for fast property access
+                    InlineCacheEntry& cache = frame.ic_cache[cache_slot];
+                    obj.as_object()->set_property_cached(name, val, cache);
+                    push(val);
+                    VM_NEXT();
+                }
+                VM_CASE(GetElem): {
                     Value key = pop();
                     Value obj = pop();
                     if (!obj.is_object()) {
@@ -489,9 +744,9 @@ VM::InterpretResult VM::interpret(const String& source) {
                         prop = Value(std::make_shared<BoundFunction>(prop, obj));
                     }
                     push(prop);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::SetElem: {
+                VM_CASE(SetElem): {
                     Value val = pop();
                     Value key = pop();
                     Value obj = pop();
@@ -504,194 +759,194 @@ VM::InterpretResult VM::interpret(const String& source) {
                         obj.as_object()->set_property(key.to_string(), val);
                     }
                     push(val);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Add: {
+                VM_CASE(Add): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::add(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Subtract: {
+                VM_CASE(Subtract): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::subtract(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Multiply: {
+                VM_CASE(Multiply): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::multiply(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Divide: {
+                VM_CASE(Divide): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::divide(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Modulo: {
+                VM_CASE(Modulo): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::modulo(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Exponent: {
+                VM_CASE(Exponent): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::exponent(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::LeftShift: {
+                VM_CASE(LeftShift): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::left_shift(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::RightShift: {
+                VM_CASE(RightShift): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::right_shift(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::UnsignedRightShift: {
+                VM_CASE(UnsignedRightShift): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::unsigned_right_shift(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::BitwiseAnd: {
+                VM_CASE(BitwiseAnd): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::bitwise_and(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::BitwiseOr: {
+                VM_CASE(BitwiseOr): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::bitwise_or(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::BitwiseXor: {
+                VM_CASE(BitwiseXor): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::bitwise_xor(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::BitwiseNot: {
+                VM_CASE(BitwiseNot): {
                     Value v = pop();
                     push(value_ops::bitwise_not(v));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Negate: {
+                VM_CASE(Negate): {
                     Value v = pop();
                     push(value_ops::negate(v));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::StrictEqual: {
+                VM_CASE(StrictEqual): {
                     Value b = pop();
                     Value a = pop();
                     push(Value(a.strict_equals(b)));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::StrictNotEqual: {
+                VM_CASE(StrictNotEqual): {
                     Value b = pop();
                     Value a = pop();
                     push(Value(!a.strict_equals(b)));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::LessThan: {
+                VM_CASE(LessThan): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::less_than(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::LessEqual: {
+                VM_CASE(LessEqual): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::less_equal(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::GreaterThan: {
+                VM_CASE(GreaterThan): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::greater_than(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::GreaterEqual: {
+                VM_CASE(GreaterEqual): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::greater_equal(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Instanceof: {
+                VM_CASE(Instanceof): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::instanceof_op(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::In: {
+                VM_CASE(In): {
                     Value b = pop();
                     Value a = pop();
                     push(value_ops::in_op(a, b));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::LogicalNot: {
+                VM_CASE(LogicalNot): {
                     Value v = pop();
                     push(Value(!v.to_boolean()));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Typeof: {
+                VM_CASE(Typeof): {
                     Value v = pop();
                     push(value_ops::typeof_op(v));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Void: {
+                VM_CASE(Void): {
                     push(Value::undefined());
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Jump: {
+                VM_CASE(Jump): {
                     i16 offset = frame.function->chunk.read_i16(frame.ip);
                     frame.ip = static_cast<usize>(static_cast<i32>(frame.ip) + 2 + offset);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::JumpIfFalse: {
+                VM_CASE(JumpIfFalse): {
                     i16 offset = frame.function->chunk.read_i16(frame.ip);
                     frame.ip += 2;
                     if (!peek().to_boolean()) {
                         frame.ip = static_cast<usize>(static_cast<i32>(frame.ip) + offset);
                     }
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::JumpIfNullish: {
+                VM_CASE(JumpIfNullish): {
                     i16 offset = frame.function->chunk.read_i16(frame.ip);
                     frame.ip += 2;
                     if (peek().is_nullish()) {
                         frame.ip = static_cast<usize>(static_cast<i32>(frame.ip) + offset);
                     }
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Throw: {
+                VM_CASE(Throw): {
                     Value v = pop();
                     handle_exception(v);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::PushHandler: {
+                VM_CASE(PushHandler): {
                     u16 catch_ip = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     u16 finally_ip = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     bool has_catch = frame.function->chunk.read(frame.ip++) != 0;
                     m_handlers.push_back(ExceptionHandler{m_frames.size() - 1, catch_ip, finally_ip, has_catch});
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::PopHandler: {
+                VM_CASE(PopHandler): {
                     if (!m_handlers.empty()) {
                         m_handlers.pop_back();
                     }
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::MakeArray: {
+                VM_CASE(MakeArray): {
                     u16 count = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     auto arr = std::make_shared<Array>();
@@ -706,9 +961,9 @@ VM::InterpretResult VM::interpret(const String& source) {
                         arr->set_element(static_cast<u32>(count - 1 - i), elems[static_cast<usize>(i)]);
                     }
                     push(Value(arr));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::ArrayPush: {
+                VM_CASE(ArrayPush): {
                     Value value = pop();
                     Value arr = pop();
                     if (!arr.is_array()) {
@@ -716,9 +971,9 @@ VM::InterpretResult VM::interpret(const String& source) {
                     }
                     arr.as<Array>()->push(value);
                     push(arr);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::ArraySpread: {
+                VM_CASE(ArraySpread): {
                     Value source = pop();
                     Value arr = pop();
                     if (!arr.is_array()) {
@@ -734,15 +989,15 @@ VM::InterpretResult VM::interpret(const String& source) {
                         target->push(source);
                     }
                     push(arr);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::MakeObject: {
+                VM_CASE(MakeObject): {
                     auto obj = std::make_shared<Object>();
                     obj->set_prototype(m_object_prototype);
                     push(Value(obj));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::ObjectSpread: {
+                VM_CASE(ObjectSpread): {
                     Value source = pop();
                     Value target = pop();
                     if (!target.is_object()) {
@@ -756,9 +1011,9 @@ VM::InterpretResult VM::interpret(const String& source) {
                         }
                     }
                     push(target);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::MakeFunction: {
+                VM_CASE(MakeFunction): {
                     u16 func_idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     if (func_idx >= m_module.functions.size()) {
@@ -773,9 +1028,9 @@ VM::InterpretResult VM::interpret(const String& source) {
                     fn_obj->set_property("length"_s, Value(static_cast<f64>(fn_obj->function->params.size())));
                     fn_obj->set_property("name"_s, Value(fn_obj->function->name));
                     push(Value(std::static_pointer_cast<Object>(fn_obj)));
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Call: {
+                VM_CASE(Call): {
                     u16 arg_count = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     Value callee = peek(arg_count);
@@ -802,9 +1057,11 @@ VM::InterpretResult VM::interpret(const String& source) {
                     } else {
                         runtime_error("Attempted to call a non-function"_s);
                     }
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::New: {
+                VM_CASE(New):
+                VM_CASE(NewStack): {
+                    bool use_stack_alloc = (static_cast<OpCode>(frame.function->chunk.read(frame.ip - 1)) == OpCode::NewStack);
                     u16 arg_count = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     Value callee = peek(arg_count);
@@ -812,7 +1069,11 @@ VM::InterpretResult VM::interpret(const String& source) {
                         runtime_error("Attempted to construct a non-function"_s);
                     }
                     // Create a new object with the constructor's prototype
+                    // For NewStack, mark as stack-allocated for potential future pooling
                     auto new_obj = std::make_shared<Object>();
+                    if (use_stack_alloc) {
+                        new_obj->set_stack_allocated(true);
+                    }
                     new_obj->set_prototype(m_object_prototype);
                     if (callee.is_object()) {
                         Value proto_val = callee.as_object()->get_property("prototype"_s);
@@ -848,13 +1109,13 @@ VM::InterpretResult VM::interpret(const String& source) {
                     } else {
                         runtime_error("Attempted to construct a non-function"_s);
                     }
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::This: {
+                VM_CASE(This): {
                     push(current_this());
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::Return: {
+                VM_CASE(Return): {
                     while (!m_handlers.empty() && m_handlers.back().frame_index == m_frames.size() - 1) {
                         m_handlers.pop_back();
                     }
@@ -876,19 +1137,30 @@ VM::InterpretResult VM::interpret(const String& source) {
                     }
                     m_stack.resize(return_stack_base);
                     push(ret);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::EnterWith: {
+                VM_CASE(EnterWith): {
                     Value obj = pop();
                     enter_with_env(obj);
-                    break;
+                    VM_NEXT();
                 }
-                case OpCode::ExitWith: {
+                VM_CASE(ExitWith): {
                     exit_with_env();
-                    break;
+                    VM_NEXT();
                 }
-            }
-        }
+
+#if USE_COMPUTED_GOTO
+        vm_exit:;  // Exit point for computed goto dispatch
+        #undef frame
+        #undef VM_DISPATCH
+        #undef VM_CASE
+        #undef VM_NEXT
+#else
+            } // end switch
+        } // end while
+        #undef VM_CASE
+        #undef VM_NEXT
+#endif
     } catch (const RuntimeError& e) {
         m_error_message = String(e.what());
         return InterpretResult::RuntimeError;
@@ -903,10 +1175,11 @@ void VM::call_function(VMFunctionObject* func_obj, usize arg_count, const Value&
     }
     auto fn = func_obj->function;
     auto env = std::make_shared<Environment>(func_obj->closure);
+    env->bind_function(fn);
 
     for (usize i = 0; i < fn->params.size(); ++i) {
         Value arg = (i < arg_count) ? peek(arg_count - 1 - i) : Value::undefined();
-        env->define(fn->params[i], arg, false);
+        env->set_local(static_cast<u16>(i), arg);
     }
 
     for (usize i = 0; i < arg_count + 1; ++i) {
@@ -914,7 +1187,8 @@ void VM::call_function(VMFunctionObject* func_obj, usize arg_count, const Value&
     }
 
     m_this_stack.push_back(receiver);
-    m_frames.push_back(CallFrame{fn, env, 0, m_stack.size(), receiver});
+    m_frames.push_back(CallFrame{fn, env, env, 0, m_stack.size(), receiver, {}});
+    m_frames.back().init_ic_cache();
 }
 
 void VM::handle_exception(const Value& thrown) {
