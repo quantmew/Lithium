@@ -15,7 +15,13 @@ std::unique_ptr<Program> Parser::parse(const String& source) {
 
     auto program = std::make_unique<Program>();
     while (!at_end()) {
+        usize prev_pos = m_current.start;
         program->body.push_back(parse_statement());
+        // Progress guard: if we didn't advance, force advance to prevent infinite loop
+        if (!at_end() && m_current.start == prev_pos) {
+            error("Parser stuck - unexpected token"_s);
+            synchronize();
+        }
     }
     return program;
 }
@@ -27,7 +33,13 @@ std::unique_ptr<Program> Parser::parse(std::string_view source) {
 
     auto program = std::make_unique<Program>();
     while (!at_end()) {
+        usize prev_pos = m_current.start;
         program->body.push_back(parse_statement());
+        // Progress guard: if we didn't advance, force advance to prevent infinite loop
+        if (!at_end() && m_current.start == prev_pos) {
+            error("Parser stuck - unexpected token"_s);
+            synchronize();
+        }
     }
     return program;
 }
@@ -76,6 +88,9 @@ bool Parser::at_end() const {
 
 void Parser::error(const String& message) {
     m_errors.push_back(message);
+    if (m_diagnostics) {
+        m_diagnostics->add(DiagnosticStage::Parser, DiagnosticLevel::Error, message, ""_s, m_current.line, m_current.column);
+    }
     if (m_error_callback) {
         m_error_callback(message, m_current.line, m_current.column);
     }
@@ -939,7 +954,7 @@ ExpressionPtr Parser::parse_update_expression() {
 ExpressionPtr Parser::parse_new_expression() {
     if (match(TokenType::New)) {
         auto expr = std::make_unique<NewExpression>();
-        expr->callee = parse_new_expression();
+        expr->callee = parse_member_expression();  // Parse member expression, not recursive new
         if (match(TokenType::OpenParen)) {
             if (!check(TokenType::CloseParen)) {
                 do {
@@ -953,34 +968,14 @@ ExpressionPtr Parser::parse_new_expression() {
     return parse_call_member_expression();
 }
 
-ExpressionPtr Parser::parse_call_member_expression() {
-    // Arrow function with single identifier parameter
-    if (check(TokenType::Identifier)) {
-        Token ident = current_token();
-        Token next = m_lexer.peek_token();
-        if (next.type == TokenType::Arrow) {
-            advance(); // consume identifier
-            advance(); // consume arrow
-            std::vector<String> params{ident.value};
-            return parse_arrow_function_after_params(std::move(params), true);
-        }
-    }
-
+ExpressionPtr Parser::parse_member_expression() {
     auto expr = parse_primary_expression();
 
     while (true) {
         if (match(TokenType::OptionalChain)) {
-            if (match(TokenType::OpenParen)) {
-                auto call = std::make_unique<CallExpression>();
-                call->callee = std::move(expr);
-                call->optional = true;
-                if (!check(TokenType::CloseParen)) {
-                    do {
-                        call->arguments.push_back(parse_assignment_expression());
-                    } while (match(TokenType::Comma));
-                }
-                expect(TokenType::CloseParen, "Expected ')' after arguments"_s);
-                expr = std::move(call);
+            if (check(TokenType::OpenParen)) {
+                // Don't consume the '(' - let caller handle calls
+                break;
             } else if (match(TokenType::OpenBracket)) {
                 auto property = parse_expression_impl();
                 expect(TokenType::CloseBracket, "Expected ']' after computed property"_s);
@@ -1001,16 +996,6 @@ ExpressionPtr Parser::parse_call_member_expression() {
                 member->property = std::move(id);
                 expr = std::move(member);
             }
-        } else if (match(TokenType::OpenParen)) {
-            auto call = std::make_unique<CallExpression>();
-            call->callee = std::move(expr);
-            if (!check(TokenType::CloseParen)) {
-                do {
-                    call->arguments.push_back(parse_assignment_expression());
-                } while (match(TokenType::Comma));
-            }
-            expect(TokenType::CloseParen, "Expected ')' after arguments"_s);
-            expr = std::move(call);
         } else if (match(TokenType::Dot)) {
             Token prop = expect(TokenType::Identifier, "Expected property name after '.'"_s);
             auto member = std::make_unique<MemberExpression>();
@@ -1028,6 +1013,58 @@ ExpressionPtr Parser::parse_call_member_expression() {
             member->property = std::move(property);
             member->computed = true;
             expr = std::move(member);
+        } else {
+            break;
+        }
+    }
+
+    return expr;
+}
+
+ExpressionPtr Parser::parse_call_member_expression() {
+    // Arrow function with single identifier parameter
+    if (check(TokenType::Identifier)) {
+        Token ident = current_token();
+        // Before peeking, set allow_regexp to false since we're after an identifier
+        m_lexer.set_allow_regexp(false);
+        Token next = m_lexer.peek_token();
+        if (next.type == TokenType::Arrow) {
+            advance(); // consume identifier
+            advance(); // consume arrow
+            std::vector<String> params{ident.value};
+            return parse_arrow_function_after_params(std::move(params), true);
+        }
+    }
+
+    auto expr = parse_member_expression();
+
+    while (true) {
+        if (match(TokenType::OptionalChain)) {
+            if (match(TokenType::OpenParen)) {
+                auto call = std::make_unique<CallExpression>();
+                call->callee = std::move(expr);
+                call->optional = true;
+                if (!check(TokenType::CloseParen)) {
+                    do {
+                        call->arguments.push_back(parse_assignment_expression());
+                    } while (match(TokenType::Comma));
+                }
+                expect(TokenType::CloseParen, "Expected ')' after arguments"_s);
+                expr = std::move(call);
+            } else {
+                // Member access was already handled by parse_member_expression
+                break;
+            }
+        } else if (match(TokenType::OpenParen)) {
+            auto call = std::make_unique<CallExpression>();
+            call->callee = std::move(expr);
+            if (!check(TokenType::CloseParen)) {
+                do {
+                    call->arguments.push_back(parse_assignment_expression());
+                } while (match(TokenType::Comma));
+            }
+            expect(TokenType::CloseParen, "Expected ')' after arguments"_s);
+            expr = std::move(call);
         } else {
             break;
         }
@@ -1105,6 +1142,9 @@ ExpressionPtr Parser::parse_primary_expression() {
         auto id = std::make_unique<Identifier>();
         id->name = m_previous.value;
         return id;
+    }
+    if (match(TokenType::This)) {
+        return std::make_unique<ThisExpression>();
     }
     if (match(TokenType::OpenParen)) {
         auto expr = parse_expression_impl();

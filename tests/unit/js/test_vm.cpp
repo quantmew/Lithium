@@ -204,3 +204,47 @@ TEST_F(JSVmTest, SimplifiedStringToNumberConversion) {
     Value result = run("' 1 ' - 0;"_s);
     EXPECT_TRUE(std::isnan(result.to_number()));
 }
+
+TEST_F(JSVmTest, ArrayPrototypeMethodsAndLength) {
+    Value result = run(
+        "let a = []; a.push(1); a.push(2); a.pop(); a.length;"_s);
+    EXPECT_DOUBLE_EQ(result.to_number(), 1.0);
+}
+
+TEST_F(JSVmTest, ArrayJoinProducesString) {
+    Value result = run("[1, 2, 3].join('-');"_s);
+    EXPECT_EQ(result.to_string(), String("1-2-3"));
+}
+
+TEST_F(JSVmTest, HasOwnPropertyExposed) {
+    Value result = run("let o = { a: 1 }; o.hasOwnProperty('a');"_s);
+    EXPECT_TRUE(result.to_boolean());
+}
+
+TEST_F(JSVmTest, InstanceofChecksPrototypeChain) {
+    Value result = run("let a = []; a instanceof Array;"_s);
+    EXPECT_TRUE(result.to_boolean());
+}
+
+TEST_F(JSVmTest, InOperatorTraversesPrototypes) {
+    Value result = run("let a = []; 'push' in a;"_s);
+    EXPECT_TRUE(result.to_boolean());
+}
+
+TEST_F(JSVmTest, GlobalThisReflectsGlobalBindings) {
+    Value result = run("let g = 9; globalThis.g;"_s);
+    EXPECT_DOUBLE_EQ(result.to_number(), 9.0);
+}
+
+TEST_F(JSVmTest, MathAndJsonAreAvailable) {
+    Value maxv = run("Math.max(1, 5, 3);"_s);
+    EXPECT_DOUBLE_EQ(maxv.to_number(), 5.0);
+
+    Value json = run("JSON.stringify({ a: 1 });"_s);
+    EXPECT_EQ(json.to_string(), String("[object Object]"));
+}
+
+TEST_F(JSVmTest, FunctionObjectsExposeLength) {
+    Value len = run("function foo(a, b, c) {} foo.length;"_s);
+    EXPECT_DOUBLE_EQ(len.to_number(), 3.0);
+}

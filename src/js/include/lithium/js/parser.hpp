@@ -2,6 +2,7 @@
 
 #include "ast.hpp"
 #include "lexer.hpp"
+#include "diagnostic.hpp"
 #include <memory>
 #include <optional>
 
@@ -23,6 +24,7 @@ public:
     [[nodiscard]] ExpressionPtr parse_expression(const String& source);
 
     void set_error_callback(ErrorCallback callback) { m_error_callback = std::move(callback); }
+    void set_diagnostics(DiagnosticSink* sink) { m_diagnostics = sink; }
     [[nodiscard]] const std::vector<String>& errors() const { return m_errors; }
     [[nodiscard]] bool has_errors() const { return !m_errors.empty(); }
 
@@ -79,6 +81,7 @@ private:
     ExpressionPtr parse_unary_expression();
     ExpressionPtr parse_update_expression();
     ExpressionPtr parse_new_expression();
+    ExpressionPtr parse_member_expression();
     ExpressionPtr parse_call_member_expression();
     ExpressionPtr parse_primary_expression();
     ExpressionPtr parse_template_literal(const Token& head);
@@ -103,6 +106,7 @@ private:
     Token m_previous;
     std::vector<String> m_errors;
     ErrorCallback m_error_callback;
+    DiagnosticSink* m_diagnostics{nullptr};
 
     bool m_in_function{false};
     bool m_allow_regexp{true};

@@ -7,6 +7,7 @@
 namespace lithium::js {
 
 class VM;
+class BoundFunction;
 
 // ============================================================================
 // Object - Base class for all JS objects
@@ -21,6 +22,7 @@ public:
     [[nodiscard]] virtual Value get_property(const String& name) const;
     virtual void set_property(const String& name, const Value& value);
     virtual bool delete_property(const String& name);
+    [[nodiscard]] virtual bool has_own_property(const String& name) const { return m_properties.count(name) > 0; }
 
     // Element access (for arrays)
     [[nodiscard]] virtual bool has_element(u32 index) const;
@@ -40,7 +42,7 @@ public:
     [[nodiscard]] virtual bool is_array() const { return false; }
 
     // GC stubs (no-op)
-    void mark() { m_marked = true; }
+    virtual void mark() { m_marked = true; }
     void unmark() { m_marked = false; }
     [[nodiscard]] bool is_marked() const { return m_marked; }
     virtual void trace() {}
@@ -69,6 +71,25 @@ private:
     String m_name;
     NativeFn m_function;
     u8 m_arity;
+};
+
+// ============================================================================
+// BoundFunction - callable that carries an explicit receiver
+// ============================================================================
+
+class BoundFunction : public Object {
+public:
+    BoundFunction(Value target, Value receiver);
+
+    [[nodiscard]] Value target() const { return m_target; }
+    [[nodiscard]] Value receiver() const { return m_receiver; }
+    [[nodiscard]] bool is_callable() const override { return true; }
+
+    void trace() override;
+
+private:
+    Value m_target;
+    Value m_receiver;
 };
 
 // ============================================================================

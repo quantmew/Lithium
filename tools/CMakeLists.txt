@@ -5,4 +5,5 @@ add_subdirectory(css_parser_cli)
 
 if(TARGET lithium_js)
     add_subdirectory(js_repl)
+    add_subdirectory(js_runfile)
 endif()

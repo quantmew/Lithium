@@ -5,6 +5,10 @@
 #include "lithium/js/vm.hpp"
 #include "lithium/js/compiler.hpp"
 #include "lithium/js/parser.hpp"
+#include <cmath>
+#include <cstdlib>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 
 namespace lithium::js {
@@ -43,15 +47,29 @@ struct VMFunctionObject : public Object {
 // Environment
 // ============================================================================
 
-VM::Environment::Environment(std::shared_ptr<Environment> parent)
-    : m_parent(std::move(parent)) {}
+VM::Environment::Environment(std::shared_ptr<Environment> parent, std::shared_ptr<Object> global_object)
+    : m_parent(std::move(parent))
+{
+    if (m_parent) {
+        m_global_object = m_parent->m_global_object;
+    } else {
+        m_global_object = std::move(global_object);
+    }
+}
 
 VM::Environment::Environment(std::shared_ptr<Environment> parent, Value with_object)
     : m_parent(std::move(parent))
-    , m_with_object(std::move(with_object)) {}
+    , m_with_object(std::move(with_object)) {
+    if (m_parent) {
+        m_global_object = m_parent->m_global_object;
+    }
+}
 
 void VM::Environment::define(const String& name, Value value, bool is_const) {
     m_values[name] = Binding{std::move(value), is_const};
+    if (m_is_global && m_global_object) {
+        m_global_object->set_property(name, m_values[name].value);
+    }
 }
 
 bool VM::Environment::assign(const String& name, const Value& value) {
@@ -67,10 +85,17 @@ bool VM::Environment::assign(const String& name, const Value& value) {
             return false;
         }
         it->second.value = value;
+        if (m_is_global && m_global_object) {
+            m_global_object->set_property(name, value);
+        }
         return true;
     }
     if (m_parent) {
         return m_parent->assign(name, value);
+    }
+    if (m_is_global && m_global_object) {
+        m_global_object->set_property(name, value);
+        return true;
     }
     return false;
 }
@@ -94,15 +119,206 @@ std::optional<VM::Binding> VM::Environment::get(const String& name) const {
 }
 
 // ============================================================================
+// Built-ins
+// ============================================================================
+
+void VM::install_global(const String& name, const Value& value, bool is_const) {
+    if (m_global_object) {
+        m_global_object->set_property(name, value);
+    }
+    m_global_env->define(name, value, is_const);
+}
+
+void VM::init_builtins() {
+    // Object constructor
+    define_native("Object"_s, [this](VM& vm, const std::vector<Value>& args) -> Value {
+        Value arg = args.empty() ? Value(std::make_shared<Object>()) : args[0];
+        if (!arg.is_object()) {
+            arg = Value(std::make_shared<Object>());
+        }
+        auto* obj = arg.as_object();
+        if (obj && !obj->prototype()) {
+            obj->set_prototype(vm.m_object_prototype);
+        }
+        return arg;
+    }, 1);
+
+    // Array constructor
+    define_native("Array"_s, [this](VM&, const std::vector<Value>& args) -> Value {
+        auto arr = std::make_shared<Array>();
+        arr->set_prototype(m_array_prototype);
+        for (const auto& v : args) {
+            arr->push(v);
+        }
+        return Value(arr);
+    }, 1);
+
+    // Minimal Function constructor placeholder
+    define_native("Function"_s, [](VM&, const std::vector<Value>&) -> Value {
+        return Value::undefined();
+    }, 0);
+
+    auto get_global_binding = [&](const String& name) -> Value {
+        auto binding = m_global_env->get(name);
+        if (binding.has_value()) {
+            return binding->value;
+        }
+        return Value::undefined();
+    };
+
+    // Wire constructor prototypes
+    Value obj_ctor = get_global_binding("Object"_s);
+    if (obj_ctor.is_object()) {
+        obj_ctor.as_object()->set_property("prototype"_s, Value(m_object_prototype));
+        m_object_prototype->set_property("constructor"_s, obj_ctor);
+    }
+    Value arr_ctor = get_global_binding("Array"_s);
+    if (arr_ctor.is_object()) {
+        arr_ctor.as_object()->set_property("prototype"_s, Value(m_array_prototype));
+        m_array_prototype->set_property("constructor"_s, arr_ctor);
+    }
+
+    // Array prototype methods
+    auto array_push = [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* arr = receiver.as<Array>();
+        if (!arr) {
+            return Value::undefined();
+        }
+        for (const auto& v : args) {
+            arr->push(v);
+        }
+        return Value(static_cast<f64>(arr->length()));
+    };
+
+    auto array_pop = [](VM& vm, const std::vector<Value>&) -> Value {
+        auto receiver = vm.current_this();
+        auto* arr = receiver.as<Array>();
+        if (!arr) {
+            return Value::undefined();
+        }
+        return arr->pop();
+    };
+
+    auto array_join = [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        auto* arr = receiver.as<Array>();
+        if (!arr) {
+            return Value::undefined();
+        }
+        String sep = args.empty() ? ","_s : args[0].to_string();
+        std::ostringstream oss;
+        for (usize i = 0; i < arr->length(); ++i) {
+            if (i > 0) {
+                oss << sep.std_string();
+            }
+            oss << arr->get_element(static_cast<u32>(i)).to_string().std_string();
+        }
+        return String(oss.str());
+    };
+
+    auto make_fn = [&](const String& nm, NativeFn fn, u8 arity) {
+        auto nf = std::make_shared<NativeFunction>(nm, fn, arity);
+        nf->set_prototype(m_function_prototype);
+        nf->set_property("length"_s, Value(static_cast<f64>(arity)));
+        nf->set_property("name"_s, Value(nm));
+        return Value(nf);
+    };
+
+    m_array_prototype->set_property("push"_s, make_fn("push"_s, array_push, 1));
+    m_array_prototype->set_property("pop"_s, make_fn("pop"_s, array_pop, 0));
+    m_array_prototype->set_property("join"_s, make_fn("join"_s, array_join, 1));
+
+    // Object prototype methods
+    auto has_own = [](VM& vm, const std::vector<Value>& args) -> Value {
+        auto receiver = vm.current_this();
+        if (!receiver.is_object() || args.empty()) {
+            return Value(false);
+        }
+        return Value(receiver.as_object()->has_own_property(args[0].to_string()));
+    };
+    m_object_prototype->set_property("hasOwnProperty"_s, make_fn("hasOwnProperty"_s, has_own, 1));
+
+    // Math object
+    auto math = std::make_shared<Object>();
+    math->set_prototype(m_object_prototype);
+    math->set_property("abs"_s, make_fn("abs"_s, [](VM&, const std::vector<Value>& args) -> Value {
+        f64 v = args.empty() ? 0.0 : args[0].to_number();
+        return Value(std::fabs(v));
+    }, 1));
+    math->set_property("floor"_s, make_fn("floor"_s, [](VM&, const std::vector<Value>& args) -> Value {
+        f64 v = args.empty() ? 0.0 : args[0].to_number();
+        return Value(std::floor(v));
+    }, 1));
+    math->set_property("ceil"_s, make_fn("ceil"_s, [](VM&, const std::vector<Value>& args) -> Value {
+        f64 v = args.empty() ? 0.0 : args[0].to_number();
+        return Value(std::ceil(v));
+    }, 1));
+    math->set_property("max"_s, make_fn("max"_s, [](VM&, const std::vector<Value>& args) -> Value {
+        if (args.empty()) return Value(-std::numeric_limits<f64>::infinity());
+        f64 best = args[0].to_number();
+        for (usize i = 1; i < args.size(); ++i) {
+            best = std::max(best, args[i].to_number());
+        }
+        return Value(best);
+    }, 1));
+    math->set_property("min"_s, make_fn("min"_s, [](VM&, const std::vector<Value>& args) -> Value {
+        if (args.empty()) return Value(std::numeric_limits<f64>::infinity());
+        f64 best = args[0].to_number();
+        for (usize i = 1; i < args.size(); ++i) {
+            best = std::min(best, args[i].to_number());
+        }
+        return Value(best);
+    }, 1));
+    math->set_property("random"_s, make_fn("random"_s, [](VM&, const std::vector<Value>&) -> Value {
+        return Value(static_cast<f64>(std::rand()) / static_cast<f64>(RAND_MAX));
+    }, 0));
+    math->set_property("sqrt"_s, make_fn("sqrt"_s, [](VM&, const std::vector<Value>& args) -> Value {
+        f64 v = args.empty() ? 0.0 : args[0].to_number();
+        return Value(std::sqrt(v));
+    }, 1));
+    math->set_property("PI"_s, Value(3.141592653589793));
+    install_global("Math"_s, Value(math), true);
+
+    // JSON object
+    auto json = std::make_shared<Object>();
+    json->set_prototype(m_object_prototype);
+    json->set_property("stringify"_s, make_fn("stringify"_s, [](VM&, const std::vector<Value>& args) -> Value {
+        if (args.empty() || args[0].is_undefined()) {
+            return Value("undefined"_s);
+        }
+        return args[0].to_string();
+    }, 1));
+    install_global("JSON"_s, Value(json), true);
+
+    // Basic globals
+    install_global("globalThis"_s, Value(m_global_object), true);
+}
+
+// ============================================================================
 // VM
 // ============================================================================
 
 VM::VM() {
-    m_global_env = std::make_shared<Environment>();
+    m_object_prototype = std::make_shared<Object>();
+    m_function_prototype = std::make_shared<Object>();
+    m_function_prototype->set_prototype(m_object_prototype);
+    m_array_prototype = std::make_shared<Array>();
+    m_array_prototype->set_prototype(m_object_prototype);
+    m_global_object = std::make_shared<Object>();
+    m_global_object->set_prototype(m_object_prototype);
+
+    m_global_env = std::make_shared<Environment>(nullptr, m_global_object);
+    m_global_env->m_is_global = true;
+    init_builtins();
 }
 
 void VM::define_native(const String& name, NativeFn fn, u8 arity) {
-    m_global_env->define(name, Value::native_function(std::move(fn), arity, name), true);
+    auto native_obj = std::make_shared<NativeFunction>(name, std::move(fn), arity);
+    native_obj->set_prototype(m_function_prototype);
+    native_obj->set_property("length"_s, Value(static_cast<f64>(arity)));
+    native_obj->set_property("name"_s, Value(name));
+    install_global(name, Value(native_obj), true);
 }
 
 void VM::push(const Value& value) {
@@ -131,10 +347,13 @@ Value VM::read_constant(const CallFrame& frame, u16 idx) const {
 }
 
 VM::InterpretResult VM::interpret(const String& source) {
+    m_diagnostics.clear();
     Parser parser;
+    parser.set_diagnostics(&m_diagnostics);
     auto program = parser.parse(source);
     if (parser.has_errors()) {
-        m_error_message = parser.errors().front();
+        const auto& diag = m_diagnostics.diagnostics().empty() ? parser.errors().front() : m_diagnostics.diagnostics().front().message;
+        m_error_message = diag;
         return InterpretResult::ParseError;
     }
 
@@ -142,6 +361,7 @@ VM::InterpretResult VM::interpret(const String& source) {
     auto result = compiler.compile(*program);
     if (!result.errors.empty()) {
         m_error_message = result.errors.front();
+        m_diagnostics.add(DiagnosticStage::Compiler, DiagnosticLevel::Error, result.errors.front());
         return InterpretResult::ParseError;
     }
 
@@ -152,7 +372,7 @@ VM::InterpretResult VM::interpret(const String& source) {
 
     auto entry_fn = m_module.functions[m_module.entry];
     auto frame_env = m_global_env;
-    m_frames.push_back(CallFrame{entry_fn, frame_env, 0, 0});
+    m_frames.push_back(CallFrame{entry_fn, frame_env, 0, 0, Value::undefined()});
 
     try {
         while (!m_frames.empty()) {
@@ -187,6 +407,14 @@ VM::InterpretResult VM::interpret(const String& source) {
                 case OpCode::Dup:
                     push(peek());
                     break;
+                case OpCode::Dup2: {
+                    // Duplicate top two values: [a, b] -> [a, b, a, b]
+                    Value b = peek(0);
+                    Value a = peek(1);
+                    push(a);
+                    push(b);
+                    break;
+                }
                 case OpCode::DefineVar: {
                     u16 name_idx = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
@@ -225,7 +453,11 @@ VM::InterpretResult VM::interpret(const String& source) {
                     if (!obj.is_object()) {
                         runtime_error("Cannot get property of non-object"_s);
                     }
-                    push(obj.as_object()->get_property(name));
+                    Value prop = obj.as_object()->get_property(name);
+                    if (prop.is_callable()) {
+                        prop = Value(std::make_shared<BoundFunction>(prop, obj));
+                    }
+                    push(prop);
                     break;
                 }
                 case OpCode::SetProp: {
@@ -247,11 +479,16 @@ VM::InterpretResult VM::interpret(const String& source) {
                     if (!obj.is_object()) {
                         runtime_error("Cannot get element of non-object"_s);
                     }
+                    Value prop;
                     if (obj.is_array()) {
-                        push(obj.as<Array>()->get_element(static_cast<u32>(key.to_uint32())));
+                        prop = obj.as<Array>()->get_element(static_cast<u32>(key.to_uint32()));
                     } else {
-                        push(obj.as_object()->get_property(key.to_string()));
+                        prop = obj.as_object()->get_property(key.to_string());
                     }
+                    if (prop.is_callable()) {
+                        prop = Value(std::make_shared<BoundFunction>(prop, obj));
+                    }
+                    push(prop);
                     break;
                 }
                 case OpCode::SetElem: {
@@ -458,6 +695,7 @@ VM::InterpretResult VM::interpret(const String& source) {
                     u16 count = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     auto arr = std::make_shared<Array>();
+                    arr->set_prototype(m_array_prototype);
                     std::vector<Value> elems;
                     elems.reserve(count);
                     for (u16 i = 0; i < count; ++i) {
@@ -499,7 +737,9 @@ VM::InterpretResult VM::interpret(const String& source) {
                     break;
                 }
                 case OpCode::MakeObject: {
-                    push(Value(std::make_shared<Object>()));
+                    auto obj = std::make_shared<Object>();
+                    obj->set_prototype(m_object_prototype);
+                    push(Value(obj));
                     break;
                 }
                 case OpCode::ObjectSpread: {
@@ -525,6 +765,13 @@ VM::InterpretResult VM::interpret(const String& source) {
                         runtime_error("Invalid function index"_s);
                     }
                     auto fn_obj = std::make_shared<VMFunctionObject>(m_module.functions[func_idx], frame.env);
+                    fn_obj->set_prototype(m_function_prototype);
+                    auto proto_obj = std::make_shared<Object>();
+                    proto_obj->set_prototype(m_object_prototype);
+                    proto_obj->set_property("constructor"_s, Value(fn_obj));
+                    fn_obj->set_property("prototype"_s, Value(proto_obj));
+                    fn_obj->set_property("length"_s, Value(static_cast<f64>(fn_obj->function->params.size())));
+                    fn_obj->set_property("name"_s, Value(fn_obj->function->name));
                     push(Value(std::static_pointer_cast<Object>(fn_obj)));
                     break;
                 }
@@ -532,6 +779,11 @@ VM::InterpretResult VM::interpret(const String& source) {
                     u16 arg_count = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
                     Value callee = peek(arg_count);
+                    Value receiver = Value::undefined();
+                    if (auto* bound = dynamic_cast<BoundFunction*>(callee.as_object())) {
+                        receiver = bound->receiver();
+                        callee = bound->target();
+                    }
                     if (auto* native = callee.as_native_function()) {
                         std::vector<Value> args;
                         args.reserve(arg_count);
@@ -541,13 +793,65 @@ VM::InterpretResult VM::interpret(const String& source) {
                         for (usize i = 0; i < arg_count + 1; ++i) {
                             pop();
                         }
+                        m_this_stack.push_back(receiver);
                         Value res = native->call(*this, args);
+                        m_this_stack.pop_back();
                         push(res);
                     } else if (auto* func_obj = dynamic_cast<VMFunctionObject*>(callee.as_object())) {
-                        call_function(func_obj, arg_count);
+                        call_function(func_obj, arg_count, receiver);
                     } else {
                         runtime_error("Attempted to call a non-function"_s);
                     }
+                    break;
+                }
+                case OpCode::New: {
+                    u16 arg_count = frame.function->chunk.read_u16(frame.ip);
+                    frame.ip += 2;
+                    Value callee = peek(arg_count);
+                    if (!callee.is_callable()) {
+                        runtime_error("Attempted to construct a non-function"_s);
+                    }
+                    // Create a new object with the constructor's prototype
+                    auto new_obj = std::make_shared<Object>();
+                    new_obj->set_prototype(m_object_prototype);
+                    if (callee.is_object()) {
+                        Value proto_val = callee.as_object()->get_property("prototype"_s);
+                        if (proto_val.is_object()) {
+                            new_obj->set_prototype(std::shared_ptr<Object>(proto_val.as_object(), [](Object*) {}));
+                        }
+                    }
+                    Value receiver(new_obj);
+                    if (auto* native = callee.as_native_function()) {
+                        std::vector<Value> args;
+                        args.reserve(arg_count);
+                        for (usize i = 0; i < arg_count; ++i) {
+                            args.push_back(peek(arg_count - 1 - i));
+                        }
+                        for (usize i = 0; i < arg_count + 1; ++i) {
+                            pop();
+                        }
+                        m_this_stack.push_back(receiver);
+                        Value res = native->call(*this, args);
+                        m_this_stack.pop_back();
+                        // If the constructor returned an object, use that; otherwise return new_obj
+                        if (res.is_object()) {
+                            push(res);
+                        } else {
+                            push(receiver);
+                        }
+                    } else if (auto* func_obj = dynamic_cast<VMFunctionObject*>(callee.as_object())) {
+                        // For VM functions, we need to call it with the new object as `this`
+                        // and return the new object if the function doesn't return an object
+                        call_function(func_obj, arg_count, receiver);
+                        // Mark this call as a constructor call so Return knows to return receiver if no object returned
+                        m_frames.back().receiver = receiver;
+                    } else {
+                        runtime_error("Attempted to construct a non-function"_s);
+                    }
+                    break;
+                }
+                case OpCode::This: {
+                    push(current_this());
                     break;
                 }
                 case OpCode::Return: {
@@ -555,12 +859,22 @@ VM::InterpretResult VM::interpret(const String& source) {
                         m_handlers.pop_back();
                     }
                     Value ret = pop();
+                    // For constructor calls, if the function returns undefined, return the receiver (new object)
+                    Value receiver = frame.receiver;
+                    if (!ret.is_object() && receiver.is_object()) {
+                        ret = receiver;
+                    }
+                    // Save current frame's stack_base before popping - this is where we should reset the stack to
+                    usize return_stack_base = frame.stack_base;
                     m_frames.pop_back();
+                    if (!m_this_stack.empty()) {
+                        m_this_stack.pop_back();
+                    }
                     if (m_frames.empty()) {
                         m_last_value = ret;
                         return InterpretResult::Ok;
                     }
-                    m_stack.resize(m_frames.back().stack_base);
+                    m_stack.resize(return_stack_base);
                     push(ret);
                     break;
                 }
@@ -583,7 +897,7 @@ VM::InterpretResult VM::interpret(const String& source) {
     return InterpretResult::Ok;
 }
 
-void VM::call_function(VMFunctionObject* func_obj, usize arg_count) {
+void VM::call_function(VMFunctionObject* func_obj, usize arg_count, const Value& receiver) {
     if (!func_obj) {
         runtime_error("Attempted to call a non-function"_s);
     }
@@ -599,7 +913,8 @@ void VM::call_function(VMFunctionObject* func_obj, usize arg_count) {
         pop();
     }
 
-    m_frames.push_back(CallFrame{fn, env, 0, m_stack.size()});
+    m_this_stack.push_back(receiver);
+    m_frames.push_back(CallFrame{fn, env, 0, m_stack.size(), receiver});
 }
 
 void VM::handle_exception(const Value& thrown) {
@@ -622,6 +937,9 @@ void VM::handle_exception(const Value& thrown) {
         }
 
         auto& frame = m_frames.back();
+        while (m_this_stack.size() > m_frames.size()) {
+            m_this_stack.pop_back();
+        }
         m_stack.resize(frame.stack_base);
         if (handler.has_catch && handler.catch_ip != 0) {
             frame.ip = handler.catch_ip;
@@ -651,7 +969,15 @@ void VM::exit_with_env() {
     }
 }
 
+Value VM::current_this() const {
+    if (m_this_stack.empty()) {
+        return Value::undefined();
+    }
+    return m_this_stack.back();
+}
+
 void VM::runtime_error(const String& message) {
+    m_diagnostics.add(DiagnosticStage::Runtime, DiagnosticLevel::Error, message);
     throw RuntimeError(message);
 }
 

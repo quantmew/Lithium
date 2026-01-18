@@ -428,7 +428,7 @@ private:
             return;
         }
         if (dynamic_cast<const ThisExpression*>(&expr)) {
-            emit(fn, OpCode::LoadUndefined);
+            emit(fn, OpCode::This);
             return;
         }
         if (auto* id = dynamic_cast<const Identifier*>(&expr)) {
@@ -544,7 +544,7 @@ private:
             for (const auto& arg : new_expr->arguments) {
                 compile_expression(*arg, fn);
             }
-            emit(fn, OpCode::Call);
+            emit(fn, OpCode::New);
             emit_u16(fn, static_cast<u16>(new_expr->arguments.size()));
             return;
         }
@@ -690,9 +690,20 @@ private:
     }
 
     void compile_assignment(const AssignmentExpression& expr, FunctionCode& fn) {
+        using Op = AssignmentExpression::Operator;
+        bool is_compound = expr.op != Op::Assign;
+
         if (auto* id = dynamic_cast<Identifier*>(expr.left.get())) {
             u16 name_idx = add_name(fn, id->name);
+            if (is_compound) {
+                // Load current value first
+                emit(fn, OpCode::GetVar);
+                emit_u16(fn, name_idx);
+            }
             compile_expression(*expr.right, fn);
+            if (is_compound) {
+                emit_compound_op(expr.op, fn);
+            }
             emit(fn, OpCode::SetVar);
             emit_u16(fn, name_idx);
             return;
@@ -704,7 +715,24 @@ private:
                 compile_expression(*member->property, fn);
             }
 
+            if (is_compound) {
+                // Duplicate object (and key if computed) for later SetProp/SetElem
+                if (member->computed) {
+                    emit(fn, OpCode::Dup2);  // Dup [obj, key]
+                    emit(fn, OpCode::GetElem);
+                } else if (auto* pid = dynamic_cast<Identifier*>(member->property.get())) {
+                    emit(fn, OpCode::Dup);   // Dup obj
+                    u16 name_idx = add_name(fn, pid->name);
+                    emit(fn, OpCode::GetProp);
+                    emit_u16(fn, name_idx);
+                }
+            }
+
             compile_expression(*expr.right, fn);
+
+            if (is_compound) {
+                emit_compound_op(expr.op, fn);
+            }
 
             if (member->computed) {
                 emit(fn, OpCode::SetElem);
@@ -714,6 +742,25 @@ private:
                 emit_u16(fn, name_idx);
             }
             return;
+        }
+    }
+
+    void emit_compound_op(AssignmentExpression::Operator op, FunctionCode& fn) {
+        using Op = AssignmentExpression::Operator;
+        switch (op) {
+            case Op::AddAssign: emit(fn, OpCode::Add); break;
+            case Op::SubtractAssign: emit(fn, OpCode::Subtract); break;
+            case Op::MultiplyAssign: emit(fn, OpCode::Multiply); break;
+            case Op::DivideAssign: emit(fn, OpCode::Divide); break;
+            case Op::ModuloAssign: emit(fn, OpCode::Modulo); break;
+            case Op::ExponentAssign: emit(fn, OpCode::Exponent); break;
+            case Op::LeftShiftAssign: emit(fn, OpCode::LeftShift); break;
+            case Op::RightShiftAssign: emit(fn, OpCode::RightShift); break;
+            case Op::UnsignedRightShiftAssign: emit(fn, OpCode::UnsignedRightShift); break;
+            case Op::BitwiseAndAssign: emit(fn, OpCode::BitwiseAnd); break;
+            case Op::BitwiseOrAssign: emit(fn, OpCode::BitwiseOr); break;
+            case Op::BitwiseXorAssign: emit(fn, OpCode::BitwiseXor); break;
+            default: break;
         }
     }
 

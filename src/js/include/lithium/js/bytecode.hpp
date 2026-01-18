@@ -23,6 +23,7 @@ enum class OpCode : u8 {
     // Stack
     Pop,
     Dup,
+    Dup2,  // Duplicate top two stack values
 
     // Variables (by name idx into constant pool holding string)
     DefineVar,      // u16 name_idx, u8 is_const
@@ -80,7 +81,11 @@ enum class OpCode : u8 {
     // Functions
     MakeFunction,   // u16 function_idx
     Call,           // u16 arg_count
+    New,            // u16 arg_count (construct)
     Return,         // no operand (uses top of stack or undefined)
+
+    // This binding
+    This,           // load current this value
 
     // Dynamic scope helpers
     EnterWith,      // none (object on stack)

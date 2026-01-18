@@ -362,7 +362,12 @@ Value Value::native_function(NativeFn fn, u8 arity, const String& name) {
 namespace value_ops {
 
 Value add(const Value& lhs, const Value& rhs) {
-    return Value(lhs.to_string() + rhs.to_string());
+    // JavaScript + operator: if either operand is a string, concatenate
+    // Otherwise, convert both to numbers and add
+    if (lhs.is_string() || rhs.is_string()) {
+        return Value(lhs.to_string() + rhs.to_string());
+    }
+    return Value(lhs.to_number() + rhs.to_number());
 }
 
 Value subtract(const Value& lhs, const Value& rhs) {
@@ -477,7 +482,23 @@ Value typeof_op(const Value& val) {
     return Value::undefined();
 }
 
-Value instanceof_op(const Value& /*obj*/, const Value& /*constructor*/) {
+Value instanceof_op(const Value& obj, const Value& constructor) {
+    if (!obj.is_object() || !constructor.is_object()) {
+        return Value(false);
+    }
+    auto* ctor_obj = constructor.as_object();
+    Value proto_val = ctor_obj->get_property("prototype"_s);
+    if (!proto_val.is_object()) {
+        return Value(false);
+    }
+    Object* proto = proto_val.as_object();
+    Object* current = obj.as_object();
+    while (current) {
+        if (current == proto) {
+            return Value(true);
+        }
+        current = current->prototype();
+    }
     return Value(false);
 }
 

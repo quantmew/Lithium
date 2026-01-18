@@ -13,6 +13,7 @@ namespace lithium::js {
 class Value;
 class Object;
 class NativeFunction;
+class BoundFunction;
 class Array;
 class VM;
 

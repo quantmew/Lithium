@@ -19,6 +19,7 @@ lithium_add_module(js
         include/lithium/js/vm.hpp
         include/lithium/js/value.hpp
         include/lithium/js/object.hpp
+        include/lithium/js/diagnostic.hpp
     PUBLIC_DEPENDENCIES
         lithium_core
 )

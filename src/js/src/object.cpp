@@ -82,6 +82,20 @@ Value NativeFunction::call(VM& vm, const std::vector<Value>& args) {
 }
 
 // ============================================================================
+// BoundFunction
+// ============================================================================
+
+BoundFunction::BoundFunction(Value target, Value receiver)
+    : m_target(std::move(target))
+    , m_receiver(std::move(receiver)) {
+}
+
+void BoundFunction::trace() {
+    m_target.mark();
+    m_receiver.mark();
+}
+
+// ============================================================================
 // Array
 // ============================================================================
 

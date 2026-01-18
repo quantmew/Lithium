@@ -82,6 +82,8 @@ static const std::unordered_map<std::string, TokenType> KEYWORDS = {
     {"with", TokenType::With},
     {"yield", TokenType::Yield},
     {"enum", TokenType::Enum},
+    {"this", TokenType::This},
+    {"super", TokenType::Super},
 };
 
 Lexer::Lexer() = default;
@@ -270,8 +272,11 @@ Token Lexer::scan_number() {
         num.append(consume());
         if (peek() == 'x' || peek() == 'X') {
             num.append(consume());
-            while (!at_end() && std::isxdigit(peek())) {
-                num.append(consume());
+            while (!at_end() && (std::isxdigit(peek()) || peek() == '_')) {
+                unicode::CodePoint cp = consume();
+                if (cp != '_') {
+                    num.append(cp);
+                }
             }
             Token token = make_token(TokenType::Number, num.build());
             token.number_value = static_cast<f64>(std::strtoll(num.build().c_str() + 2, nullptr, 16));
@@ -280,8 +285,11 @@ Token Lexer::scan_number() {
         }
         if (peek() == 'o' || peek() == 'O') {
             num.append(consume());
-            while (!at_end() && peek() >= '0' && peek() <= '7') {
-                num.append(consume());
+            while (!at_end() && ((peek() >= '0' && peek() <= '7') || peek() == '_')) {
+                unicode::CodePoint cp = consume();
+                if (cp != '_') {
+                    num.append(cp);
+                }
             }
             Token token = make_token(TokenType::Number, num.build());
             token.number_value = static_cast<f64>(std::strtoll(num.build().c_str() + 2, nullptr, 8));
@@ -290,8 +298,11 @@ Token Lexer::scan_number() {
         }
         if (peek() == 'b' || peek() == 'B') {
             num.append(consume());
-            while (!at_end() && (peek() == '0' || peek() == '1')) {
-                num.append(consume());
+            while (!at_end() && (peek() == '0' || peek() == '1' || peek() == '_')) {
+                unicode::CodePoint cp = consume();
+                if (cp != '_') {
+                    num.append(cp);
+                }
             }
             Token token = make_token(TokenType::Number, num.build());
             token.number_value = static_cast<f64>(std::strtoll(num.build().c_str() + 2, nullptr, 2));
@@ -301,16 +312,22 @@ Token Lexer::scan_number() {
     }
 
     // Integer part
-    while (!at_end() && std::isdigit(peek())) {
-        num.append(consume());
+    while (!at_end() && (std::isdigit(peek()) || peek() == '_')) {
+        unicode::CodePoint cp = consume();
+        if (cp != '_') {
+            num.append(cp);
+        }
     }
 
     // Fractional part
-    if (peek() == '.' && std::isdigit(peek(1))) {
+    if (peek() == '.' && (std::isdigit(peek(1)) || peek(1) == '_')) {
         is_float = true;
         num.append(consume()); // .
-        while (!at_end() && std::isdigit(peek())) {
-            num.append(consume());
+        while (!at_end() && (std::isdigit(peek()) || peek() == '_')) {
+            unicode::CodePoint cp = consume();
+            if (cp != '_') {
+                num.append(cp);
+            }
         }
     }
 
@@ -321,8 +338,11 @@ Token Lexer::scan_number() {
         if (peek() == '+' || peek() == '-') {
             num.append(consume());
         }
-        while (!at_end() && std::isdigit(peek())) {
-            num.append(consume());
+        while (!at_end() && (std::isdigit(peek()) || peek() == '_')) {
+            unicode::CodePoint cp = consume();
+            if (cp != '_') {
+                num.append(cp);
+            }
         }
     }
 
