@@ -113,52 +113,51 @@ bool Object::delete_property(const String& name) {
     return m_overflow_properties.erase(name) > 0;
 }
 
-// Fast property access with inline caching
+// Fast property access with polymorphic inline caching
 Value Object::get_property_cached(const String& name, InlineCacheEntry& cache) const {
-    // IC fast path: if shape matches, use cached slot directly
-    if (cache.valid && m_shape && cache.shape_id == m_shape->id()) {
-        if (cache.slot >= 0 && static_cast<usize>(cache.slot) < m_slots.size()) {
-            return m_slots[cache.slot];
+    // Polymorphic IC fast path: check if current shape is in cache
+    if (cache.valid && m_shape) {
+        i32 cached_slot = cache.find_slot(m_shape->id());
+        if (cached_slot >= 0 && static_cast<usize>(cached_slot) < m_slots.size()) {
+            // Cache hit - direct slot access
+            return m_slots[cached_slot];
         }
     }
 
-    // Slow path: look up property and update cache
+    // Cache miss - look up property in shape
     if (m_shape) {
         i32 slot = m_shape->find_slot(name);
         if (slot >= 0 && static_cast<usize>(slot) < m_slots.size()) {
-            // Update cache
-            cache.shape_id = m_shape->id();
-            cache.slot = slot;
-            cache.valid = true;
+            // Add this shape to the polymorphic cache
+            cache.add_shape(m_shape->id(), slot);
             return m_slots[slot];
         }
     }
 
-    // Not in shape, invalidate cache and use slow path
-    cache.invalidate();
+    // Property not in shape - check overflow and prototype
+    // Don't cache these (too complex to track)
     return get_property(name);
 }
 
 void Object::set_property_cached(const String& name, const Value& value, InlineCacheEntry& cache) {
-    // IC fast path: if shape matches and property exists, use cached slot
-    if (cache.valid && m_shape && cache.shape_id == m_shape->id()) {
-        if (cache.slot >= 0 && static_cast<usize>(cache.slot) < m_slots.size()) {
-            m_slots[cache.slot] = value;
+    // Polymorphic IC fast path: check if current shape is in cache
+    if (cache.valid && m_shape) {
+        i32 cached_slot = cache.find_slot(m_shape->id());
+        if (cached_slot >= 0 && static_cast<usize>(cached_slot) < m_slots.size()) {
+            // Cache hit - direct slot update
+            m_slots[cached_slot] = value;
             return;
         }
     }
 
-    // Need to go through slow path (may transition shape)
-    // After set_property, update cache if property is now in shape
+    // Cache miss - need to go through slow path (may transition shape)
     set_property(name, value);
 
-    // Update cache with new shape info
+    // After set_property, update cache with new shape info
     if (m_shape) {
         i32 slot = m_shape->find_slot(name);
         if (slot >= 0) {
-            cache.shape_id = m_shape->id();
-            cache.slot = slot;
-            cache.valid = true;
+            cache.add_shape(m_shape->id(), slot);
         }
     }
 }

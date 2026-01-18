@@ -1,9 +1,10 @@
 /**
- * JavaScript Value implementation with NaN-Boxing
+ * JavaScript Value implementation with NaN-Boxing and String Interning
  */
 
 #include "lithium/js/value.hpp"
 #include "lithium/js/object.hpp"
+#include "lithium/js/string_intern.hpp"
 #include <atomic>
 #include <cctype>
 #include <cmath>
@@ -16,18 +17,8 @@ namespace lithium::js {
 // Reference counting for NaN-boxed pointers
 // ============================================================================
 
-// We use intrusive reference counting for strings stored in NaN-boxed values.
-// Objects use shared_ptr internally, but we store raw pointers and manually
-// increment/decrement the control block.
-
-// String reference count storage (we wrap String with a ref count)
-struct RefCountedString {
-    std::atomic<u32> ref_count{1};
-    String str;
-
-    explicit RefCountedString(const String& s) : str(s) {}
-    explicit RefCountedString(String&& s) : str(std::move(s)) {}
-};
+// Strings now use the StringInternPool for interning.
+// InternedString is defined in string_intern.hpp with ref counting built in.
 
 // Object wrapper for reference counting
 struct RefCountedObject {
@@ -42,19 +33,21 @@ struct RefCountedObject {
 // so we skip the redundant type check here
 
 void Value::inc_ref() const {
-    // Both RefCountedString and RefCountedObject have ref_count at offset 0
+    // Both InternedString and RefCountedObject have ref_count at offset 0
     auto* ref = reinterpret_cast<std::atomic<u32>*>(m_bits & PAYLOAD_MASK);
     ref->fetch_add(1, std::memory_order_relaxed);
 }
 
 void Value::dec_ref() const {
     void* ptr = reinterpret_cast<void*>(m_bits & PAYLOAD_MASK);
-    auto* ref = reinterpret_cast<std::atomic<u32>*>(ptr);
-    if (ref->fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        // Delete based on tag
-        if ((m_bits & TAG_MASK) == TAG_STRING) {
-            delete reinterpret_cast<RefCountedString*>(ptr);
-        } else {
+
+    if ((m_bits & TAG_MASK) == TAG_STRING) {
+        // Use intern pool's dec_ref for strings
+        StringInternPool::instance().dec_ref(reinterpret_cast<InternedString*>(ptr));
+    } else {
+        // Object ref counting
+        auto* ref = reinterpret_cast<std::atomic<u32>*>(ptr);
+        if (ref->fetch_sub(1, std::memory_order_acq_rel) == 1) {
             delete reinterpret_cast<RefCountedObject*>(ptr);
         }
     }
@@ -65,19 +58,22 @@ void Value::dec_ref() const {
 // ============================================================================
 
 Value::Value(const char* s) {
-    auto* rcs = new RefCountedString(String(s));
-    m_bits = make_tagged_ptr(TAG_STRING, rcs);
+    // Use string interning for all strings
+    auto* interned = StringInternPool::instance().intern(String(s));
+    m_bits = make_tagged_ptr(TAG_STRING, interned);
 }
 
 Value::Value(const String& s) {
-    auto* rcs = new RefCountedString(s);
-    m_bits = make_tagged_ptr(TAG_STRING, rcs);
+    // Use string interning for all strings
+    auto* interned = StringInternPool::instance().intern(s);
+    m_bits = make_tagged_ptr(TAG_STRING, interned);
 }
 
 Value::Value(String* s) {
-    auto* rcs = new RefCountedString(std::move(*s));
+    // Use string interning for all strings
+    auto* interned = StringInternPool::instance().intern(*s);
     delete s;
-    m_bits = make_tagged_ptr(TAG_STRING, rcs);
+    m_bits = make_tagged_ptr(TAG_STRING, interned);
 }
 
 Value::Value(Object* obj) {
@@ -158,9 +154,9 @@ f64 Value::as_number() const {
 const String& Value::as_string() const {
     static String empty;
     if (!is_string()) return empty;
-    auto* rcs = get_pointer<RefCountedString>();
-    if (!rcs) return empty;
-    return rcs->str;
+    auto* interned = get_pointer<InternedString>();
+    if (!interned) return empty;
+    return interned->str;
 }
 
 Object* Value::as_object() const {
@@ -309,8 +305,14 @@ bool Value::strict_equals(const Value& other) const {
             if (std::isnan(a) || std::isnan(b)) return false;
             return a == b;
         }
-        case ValueType::String:
-            return as_string() == other.as_string();
+        case ValueType::String: {
+            // Fast path: interned strings can be compared by pointer
+            auto* s1 = get_pointer<InternedString>();
+            auto* s2 = other.get_pointer<InternedString>();
+            if (s1 == s2) return true;  // Same interned string
+            // Fallback to value comparison (shouldn't happen with interning)
+            return s1 && s2 && s1->str == s2->str;
+        }
         case ValueType::Object:
             return as_object() == other.as_object();
         default:

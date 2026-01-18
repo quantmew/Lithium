@@ -11,6 +11,7 @@ lithium_add_module(js
         src/value.cpp
         src/object.cpp
         src/shape.cpp
+        src/string_intern.cpp
     HEADERS
         include/lithium/js/lexer.hpp
         include/lithium/js/parser.hpp
@@ -21,6 +22,7 @@ lithium_add_module(js
         include/lithium/js/value.hpp
         include/lithium/js/object.hpp
         include/lithium/js/shape.hpp
+        include/lithium/js/string_intern.hpp
         include/lithium/js/diagnostic.hpp
     PUBLIC_DEPENDENCIES
         lithium_core

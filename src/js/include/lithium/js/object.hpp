@@ -11,15 +11,57 @@ class VM;
 class BoundFunction;
 
 // ============================================================================
-// Inline Cache Entry - cached property access information
+// Polymorphic Inline Cache Entry - cached property access for multiple shapes
 // ============================================================================
+//
+// Caches up to 4 different shapes at each property access site.
+// This handles the common case where a property is accessed on objects
+// with 2-4 different shapes (e.g., in polymorphic code).
+//
+// Benefits over monomorphic IC:
+// - Handles polymorphic code without constant cache invalidation
+// - Still O(1) lookup for up to 4 shapes
+// - Falls back to slow path only for megamorphic sites (>4 shapes)
 
 struct InlineCacheEntry {
-    u32 shape_id{0};      // Cached shape ID
-    i32 slot{-1};         // Cached slot index (-1 = not cached)
-    bool valid{false};    // Is this cache entry valid?
+    static constexpr u32 MAX_SHAPES = 4;
 
-    void invalidate() { valid = false; slot = -1; }
+    struct ShapeSlot {
+        u32 shape_id{0};
+        i32 slot{-1};
+
+        [[nodiscard]] bool is_valid() const { return slot >= 0; }
+        void clear() { shape_id = 0; slot = -1; }
+    };
+
+    ShapeSlot shapes[MAX_SHAPES];
+    u8 next_slot{0};      // Round-robin index for adding new shapes
+    bool valid{false};    // Is any entry valid?
+
+    // Find cached slot for a shape, returns -1 if not found
+    [[nodiscard]] i32 find_slot(u32 shape_id) const {
+        for (u32 i = 0; i < MAX_SHAPES; ++i) {
+            if (shapes[i].shape_id == shape_id && shapes[i].slot >= 0) {
+                return shapes[i].slot;
+            }
+        }
+        return -1;
+    }
+
+    // Add a new shape->slot mapping (round-robin replacement)
+    void add_shape(u32 shape_id, i32 slot) {
+        shapes[next_slot] = {shape_id, slot};
+        next_slot = static_cast<u8>((next_slot + 1) % MAX_SHAPES);
+        valid = true;
+    }
+
+    void invalidate() {
+        for (auto& s : shapes) {
+            s.clear();
+        }
+        next_slot = 0;
+        valid = false;
+    }
 };
 
 // ============================================================================

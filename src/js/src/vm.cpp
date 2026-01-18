@@ -534,6 +534,31 @@ VM::InterpretResult VM::interpret(const String& source) {
         CallFrame* frame_ptr = &m_frames.back();
         #define frame (*frame_ptr)
 
+        // ====================================================================
+        // Inline Stack Operations (avoid function call overhead)
+        // ====================================================================
+        #define VM_PUSH(val) m_stack.push_back(val)
+        #define VM_POP() ([this]() -> Value { \
+            Value v = std::move(m_stack.back()); \
+            m_stack.pop_back(); \
+            return v; \
+        })()
+        #define VM_PEEK(dist) m_stack[m_stack.size() - 1 - (dist)]
+        #define VM_PEEK_REF(dist) m_stack[m_stack.size() - 1 - (dist)]
+
+        // ====================================================================
+        // Inline Local Variable Access (fast path for non-with environments)
+        // ====================================================================
+        #define VM_GET_LOCAL_FAST(slot) frame.lexical_env->m_locals[slot]
+        #define VM_SET_LOCAL_FAST(slot, val) (frame.lexical_env->m_locals[slot] = (val))
+
+        // ====================================================================
+        // Fast Number Arithmetic (avoid Value copy overhead)
+        // ====================================================================
+        // Check if a value is a direct double (most common case for numbers)
+        #define VM_IS_NUMBER(v) ((v).is_number())
+        #define VM_AS_NUMBER(v) ((v).as_number())
+
         #define VM_DISPATCH() do { \
             if (m_frames.empty()) goto vm_exit; \
             frame_ptr = &m_frames.back(); \
@@ -629,39 +654,35 @@ VM::InterpretResult VM::interpret(const String& source) {
                 VM_CASE(GetLocal): {
                     u16 slot = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
-                    if (slot >= frame.function->local_names.size()) {
-                        runtime_error("Invalid local slot"_s);
-                    }
-                    if (frame.env->is_with_env()) {
+                    // Fast path: direct array access (most common case)
+                    if (!frame.env->is_with_env()) {
+                        VM_PUSH(VM_GET_LOCAL_FAST(slot));
+                    } else {
+                        // Slow path: with-env requires name lookup
                         const auto& name = frame.function->local_names[slot];
                         auto binding = frame.env->get(name);
                         if (!binding) {
                             runtime_error("Undefined variable: "_s + name);
                         }
-                        push(binding->value);
-                    } else {
-                        push(frame.lexical_env->get_local(slot));
+                        VM_PUSH(binding->value);
                     }
                     VM_NEXT();
                 }
                 VM_CASE(SetLocal): {
                     u16 slot = frame.function->chunk.read_u16(frame.ip);
                     frame.ip += 2;
-                    if (slot >= frame.function->local_names.size()) {
-                        runtime_error("Invalid local slot"_s);
-                    }
-                    Value val = pop();
-                    const auto& name = frame.function->local_names[slot];
-                    if (frame.env->is_with_env()) {
+                    Value val = VM_POP();
+                    // Fast path: direct array access (most common case)
+                    if (!frame.env->is_with_env()) {
+                        VM_SET_LOCAL_FAST(slot, val);
+                    } else {
+                        // Slow path: with-env requires name lookup
+                        const auto& name = frame.function->local_names[slot];
                         if (!frame.env->assign(name, val)) {
                             runtime_error("Assignment to undeclared or const variable: "_s + name);
                         }
-                    } else {
-                        if (!frame.lexical_env->set_local(slot, val)) {
-                            runtime_error("Assignment to undeclared or const variable: "_s + name);
-                        }
                     }
-                    push(val);
+                    VM_PUSH(val);
                     VM_NEXT();
                 }
                 VM_CASE(GetProp): {
@@ -762,27 +783,64 @@ VM::InterpretResult VM::interpret(const String& source) {
                     VM_NEXT();
                 }
                 VM_CASE(Add): {
-                    Value b = pop();
-                    Value a = pop();
-                    push(value_ops::add(a, b));
+                    Value& b = VM_PEEK_REF(0);
+                    Value& a = VM_PEEK_REF(1);
+                    // Fast path: both numbers - do direct arithmetic
+                    if (VM_IS_NUMBER(a) && VM_IS_NUMBER(b)) {
+                        f64 result = VM_AS_NUMBER(a) + VM_AS_NUMBER(b);
+                        m_stack.pop_back();
+                        VM_PEEK_REF(0) = Value(result);
+                    } else {
+                        // Slow path: string concatenation or type coercion
+                        Value bv = VM_POP();
+                        Value av = VM_POP();
+                        VM_PUSH(value_ops::add(av, bv));
+                    }
                     VM_NEXT();
                 }
                 VM_CASE(Subtract): {
-                    Value b = pop();
-                    Value a = pop();
-                    push(value_ops::subtract(a, b));
+                    Value& b = VM_PEEK_REF(0);
+                    Value& a = VM_PEEK_REF(1);
+                    // Fast path: both numbers
+                    if (VM_IS_NUMBER(a) && VM_IS_NUMBER(b)) {
+                        f64 result = VM_AS_NUMBER(a) - VM_AS_NUMBER(b);
+                        m_stack.pop_back();
+                        VM_PEEK_REF(0) = Value(result);
+                    } else {
+                        Value bv = VM_POP();
+                        Value av = VM_POP();
+                        VM_PUSH(value_ops::subtract(av, bv));
+                    }
                     VM_NEXT();
                 }
                 VM_CASE(Multiply): {
-                    Value b = pop();
-                    Value a = pop();
-                    push(value_ops::multiply(a, b));
+                    Value& b = VM_PEEK_REF(0);
+                    Value& a = VM_PEEK_REF(1);
+                    // Fast path: both numbers
+                    if (VM_IS_NUMBER(a) && VM_IS_NUMBER(b)) {
+                        f64 result = VM_AS_NUMBER(a) * VM_AS_NUMBER(b);
+                        m_stack.pop_back();
+                        VM_PEEK_REF(0) = Value(result);
+                    } else {
+                        Value bv = VM_POP();
+                        Value av = VM_POP();
+                        VM_PUSH(value_ops::multiply(av, bv));
+                    }
                     VM_NEXT();
                 }
                 VM_CASE(Divide): {
-                    Value b = pop();
-                    Value a = pop();
-                    push(value_ops::divide(a, b));
+                    Value& b = VM_PEEK_REF(0);
+                    Value& a = VM_PEEK_REF(1);
+                    // Fast path: both numbers
+                    if (VM_IS_NUMBER(a) && VM_IS_NUMBER(b)) {
+                        f64 result = VM_AS_NUMBER(a) / VM_AS_NUMBER(b);
+                        m_stack.pop_back();
+                        VM_PEEK_REF(0) = Value(result);
+                    } else {
+                        Value bv = VM_POP();
+                        Value av = VM_POP();
+                        VM_PUSH(value_ops::divide(av, bv));
+                    }
                     VM_NEXT();
                 }
                 VM_CASE(Modulo): {
@@ -856,27 +914,60 @@ VM::InterpretResult VM::interpret(const String& source) {
                     VM_NEXT();
                 }
                 VM_CASE(LessThan): {
-                    Value b = pop();
-                    Value a = pop();
-                    push(value_ops::less_than(a, b));
+                    Value& b = VM_PEEK_REF(0);
+                    Value& a = VM_PEEK_REF(1);
+                    // Fast path: both numbers
+                    if (VM_IS_NUMBER(a) && VM_IS_NUMBER(b)) {
+                        bool result = VM_AS_NUMBER(a) < VM_AS_NUMBER(b);
+                        m_stack.pop_back();
+                        VM_PEEK_REF(0) = Value(result);
+                    } else {
+                        Value bv = VM_POP();
+                        Value av = VM_POP();
+                        VM_PUSH(value_ops::less_than(av, bv));
+                    }
                     VM_NEXT();
                 }
                 VM_CASE(LessEqual): {
-                    Value b = pop();
-                    Value a = pop();
-                    push(value_ops::less_equal(a, b));
+                    Value& b = VM_PEEK_REF(0);
+                    Value& a = VM_PEEK_REF(1);
+                    if (VM_IS_NUMBER(a) && VM_IS_NUMBER(b)) {
+                        bool result = VM_AS_NUMBER(a) <= VM_AS_NUMBER(b);
+                        m_stack.pop_back();
+                        VM_PEEK_REF(0) = Value(result);
+                    } else {
+                        Value bv = VM_POP();
+                        Value av = VM_POP();
+                        VM_PUSH(value_ops::less_equal(av, bv));
+                    }
                     VM_NEXT();
                 }
                 VM_CASE(GreaterThan): {
-                    Value b = pop();
-                    Value a = pop();
-                    push(value_ops::greater_than(a, b));
+                    Value& b = VM_PEEK_REF(0);
+                    Value& a = VM_PEEK_REF(1);
+                    if (VM_IS_NUMBER(a) && VM_IS_NUMBER(b)) {
+                        bool result = VM_AS_NUMBER(a) > VM_AS_NUMBER(b);
+                        m_stack.pop_back();
+                        VM_PEEK_REF(0) = Value(result);
+                    } else {
+                        Value bv = VM_POP();
+                        Value av = VM_POP();
+                        VM_PUSH(value_ops::greater_than(av, bv));
+                    }
                     VM_NEXT();
                 }
                 VM_CASE(GreaterEqual): {
-                    Value b = pop();
-                    Value a = pop();
-                    push(value_ops::greater_equal(a, b));
+                    Value& b = VM_PEEK_REF(0);
+                    Value& a = VM_PEEK_REF(1);
+                    if (VM_IS_NUMBER(a) && VM_IS_NUMBER(b)) {
+                        bool result = VM_AS_NUMBER(a) >= VM_AS_NUMBER(b);
+                        m_stack.pop_back();
+                        VM_PEEK_REF(0) = Value(result);
+                    } else {
+                        Value bv = VM_POP();
+                        Value av = VM_POP();
+                        VM_PUSH(value_ops::greater_equal(av, bv));
+                    }
                     VM_NEXT();
                 }
                 VM_CASE(Instanceof): {
