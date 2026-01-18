@@ -178,4 +178,14 @@ elseif(UNIX)
             ${GL_CFLAGS_OTHER}
         )
     endif()
+
+    # FreeType for text rendering on Linux
+    find_package(Freetype REQUIRED)
+    target_link_libraries(lithium_platform PRIVATE
+        Freetype::Freetype
+    )
+    target_include_directories(lithium_platform PRIVATE
+        ${FREETYPE_INCLUDE_DIRS}
+    )
+    target_compile_definitions(lithium_platform PRIVATE LITHIUM_HAS_FREETYPE)
 endif()

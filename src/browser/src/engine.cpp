@@ -7,6 +7,7 @@
 #include "lithium/html/tree_builder.hpp"
 #include "lithium/render/display_list.hpp"
 #include "lithium/render/paint_context.hpp"
+#include "lithium/core/logger.hpp"
 
 namespace lithium::browser {
 
@@ -76,6 +77,8 @@ void Engine::load_html(const String& html, const String& base_url) {
     m_current_url = base_url;
     m_resource_loader.set_base_url(base_url);
 
+    LITHIUM_LOG_INFO("Engine::load_html: loading {} bytes from {}", html.length(), base_url);
+
     if (m_on_load_started) {
         m_on_load_started(base_url);
     }
@@ -138,22 +141,27 @@ void Engine::resize(i32 width, i32 height) {
 void Engine::render(platform::GraphicsContext& graphics) {
     // Update layout if needed
     if (m_layout_dirty) {
+        LITHIUM_LOG_INFO("Engine::render: updating layout (dirty)");
         update_layout();
     }
 
     // Rebuild display list if needed
     if (m_render_dirty && m_layout_tree) {
+        LITHIUM_LOG_INFO("Engine::render: rebuilding display list (render dirty)");
         render::DisplayListBuilder builder;
         auto display_list = builder.build(*m_layout_tree);
 
-        // Clear and render
-        graphics.begin_frame();
-        graphics.clear({255, 255, 255, 255});  // White background
-
+        // Paint the display list (frame management is handled by caller)
         render::paint_display_list(graphics, display_list);
 
-        graphics.end_frame();
         m_render_dirty = false;
+    } else {
+        if (!m_render_dirty) {
+            LITHIUM_LOG_DEBUG("Engine::render: skipping - render not dirty");
+        }
+        if (!m_layout_tree) {
+            LITHIUM_LOG_WARN("Engine::render: skipping - no layout tree");
+        }
     }
 }
 
@@ -188,12 +196,17 @@ void Engine::process_tasks() {
 }
 
 void Engine::parse_html_response(const String& html) {
+    LITHIUM_LOG_INFO("Engine::parse_html_response: parsing {} bytes of HTML", html.length());
+
     // Parse HTML
     m_document = m_html_parser.parse(html);
 
     if (!m_document) {
+        LITHIUM_LOG_ERROR("Engine::parse_html_response: failed to parse HTML document");
         return;
     }
+
+    LITHIUM_LOG_INFO("Engine::parse_html_response: HTML parsed successfully");
 
     // Set up DOM bindings
     m_dom_bindings->set_document(m_document);
@@ -269,26 +282,38 @@ void Engine::execute_scripts() {
 
 void Engine::update_layout() {
     if (!m_document) {
+        LITHIUM_LOG_WARN("Engine::update_layout: no document, clearing layout tree");
         m_layout_tree.reset();
         m_layout_dirty = false;
         return;
     }
 
+    LITHIUM_LOG_INFO("Engine::update_layout: building layout tree (viewport: {}x{})",
+        m_viewport_width, m_viewport_height);
+
     // Build layout tree
     layout::LayoutTreeBuilder builder;
     m_layout_tree = builder.build(*m_document, m_style_resolver);
 
-    // Perform layout
-    if (m_layout_tree) {
-        layout::LayoutContext context{};
-        context.containing_block_width = static_cast<f32>(m_viewport_width);
-        context.containing_block_height = static_cast<f32>(m_viewport_height);
-        context.viewport_width = static_cast<f32>(m_viewport_width);
-        context.viewport_height = static_cast<f32>(m_viewport_height);
-        context.root_font_size = 16.0f;
-        context.font_context = &m_layout_engine.font_context();
-        m_layout_engine.layout(*m_layout_tree, context);
+    if (!m_layout_tree) {
+        LITHIUM_LOG_ERROR("Engine::update_layout: failed to build layout tree");
+        m_layout_dirty = false;
+        return;
     }
+
+    LITHIUM_LOG_INFO("Engine::update_layout: layout tree built successfully");
+
+    // Perform layout
+    layout::LayoutContext context{};
+    context.containing_block_width = static_cast<f32>(m_viewport_width);
+    context.containing_block_height = static_cast<f32>(m_viewport_height);
+    context.viewport_width = static_cast<f32>(m_viewport_width);
+    context.viewport_height = static_cast<f32>(m_viewport_height);
+    context.root_font_size = 16.0f;
+    context.font_context = &m_layout_engine.font_context();
+    m_layout_engine.layout(*m_layout_tree, context);
+
+    LITHIUM_LOG_INFO("Engine::update_layout: layout completed");
 
     m_layout_dirty = false;
     m_render_dirty = true;

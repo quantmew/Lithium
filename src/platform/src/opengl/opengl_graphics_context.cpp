@@ -26,6 +26,13 @@
     typedef BOOL (WINAPI *PFNWGLSWAPBUFFERS)(HDC);
     typedef PROC (WINAPI *PFNWGLGETPROCADDRESS)(LPCSTR);
 
+    // OpenGL function pointers (will be loaded with GLAD)
+    typedef HGLRC (WINAPI *PFNWGLCREATECONTEXT)(HDC);
+    typedef BOOL (WINAPI *PFNWGLDELETECONTEXT)(HGLRC);
+    typedef BOOL (WINAPI *PFNWGLMAKECURRENT)(HDC, HGLRC);
+    typedef BOOL (WINAPI *PFNWGLSWAPBUFFERS)(HDC);
+    typedef PROC (WINAPI *PFNWGLGETPROCADDRESS)(LPCSTR);
+
 #elif defined(__linux__)
     #include <GL/glx.h>
     #include <X11/Xlib.h>
@@ -565,6 +572,20 @@ void OpenGLGraphicsContext::draw_text(const PointF& position, const String& text
     (void)text;
     (void)color;
     (void)size;
+}
+
+f32 OpenGLGraphicsContext::measure_text(const String& text, f32 size) {
+    // TODO: Implement text measurement (will use shared glyph cache)
+    (void)text;
+    (void)size;
+    // Approximate: 6 pixels per character
+    return static_cast<f32>(text.length() * 6);
+}
+
+SizeF OpenGLGraphicsContext::measure_text_size(const String& text, f32 size) {
+    f32 width = measure_text(text, size);
+    f32 height = size;  // Approximate height as font size
+    return {width, height};
 }
 
 void OpenGLGraphicsContext::draw_bitmap(const RectF& dest, const Bitmap& bitmap) {

@@ -63,6 +63,10 @@ public:
     // Text drawing
     void draw_text(const PointF& position, const String& text, const Color& color, f32 size) override;
 
+    // Text measurement
+    f32 measure_text(const String& text, f32 size) override;
+    SizeF measure_text_size(const String& text, f32 size) override;
+
     // Bitmap drawing
     void draw_bitmap(const RectF& dest, const Bitmap& bitmap) override;
     void draw_bitmap(const RectF& dest, const RectF& src, const Bitmap& bitmap) override;

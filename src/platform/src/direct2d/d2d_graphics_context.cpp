@@ -6,6 +6,7 @@
  */
 
 #include "lithium/platform/d2d_graphics_context.hpp"
+#include "lithium/platform/d2d_text_renderer.hpp"
 #include "lithium/platform/window.hpp"
 #include "lithium/core/logger.hpp"
 
@@ -181,6 +182,11 @@ bool D2DGraphicsContext::initialize(const GraphicsConfig& config) {
         m_render_state = std::make_unique<D2DRenderState>();
         m_texture_cache = std::make_unique<D2DTextureCache>();
         m_text_renderer = std::make_unique<D2DTextRenderer>();
+
+        // Initialize text renderer
+        if (!m_text_renderer->initialize(m_d2d_factory)) {
+            LITHIUM_LOG_WARN("Failed to initialize text renderer");
+        }
 
         // Initialize transform
         m_current_transform = {0, 0, 1, 1, 0, {}};
@@ -693,6 +699,36 @@ void D2DGraphicsContext::draw_text(const PointF& position, const String& text, c
         (void)color;
         (void)size;
     #endif
+}
+
+f32 D2DGraphicsContext::measure_text(const String& text, f32 size) {
+    #ifdef _WIN32
+        if (m_text_renderer) {
+            return m_text_renderer->measure_text(text, L"Segoe UI", size);
+        }
+    #else
+        (void)text;
+        (void)size;
+    #endif
+    return 0.0f;
+}
+
+SizeF D2DGraphicsContext::measure_text_size(const String& text, f32 size) {
+    f32 width = measure_text(text, size);
+    f32 height = size;  // Approximate height as font size
+
+    #ifdef _WIN32
+        if (m_text_renderer) {
+            f32 ascent, descent, line_height;
+            if (m_text_renderer->get_font_metrics(L"Segoe UI", size, &ascent, &descent, &line_height)) {
+                height = line_height;
+            }
+        }
+    #else
+        (void)text;
+    #endif
+
+    return {width, height};
 }
 
 void D2DGraphicsContext::draw_bitmap(const RectF& dest, const Bitmap& bitmap) {

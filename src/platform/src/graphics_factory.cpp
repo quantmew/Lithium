@@ -71,24 +71,36 @@ GraphicsBackendFactory::try_create_backend(
     const GraphicsConfig& config,
     GraphicsConfig::BackendType backend
 ) {
+    LITHIUM_LOG_INFO("try_create_backend: backend type = {}", static_cast<int>(backend));
+
     switch (backend) {
         case GraphicsConfig::BackendType::OpenGL:
+            LITHIUM_LOG_INFO("Trying OpenGL backend...");
             #ifdef LITHIUM_HAS_OPENGL
             if (is_opengl_available()) {
+                LITHIUM_LOG_INFO("OpenGL is available, creating context");
                 return create_opengl(window, config);
             }
+            LITHIUM_LOG_WARN("OpenGL not available");
             #endif
             return make_error(BackendError::NotSupported);
 
         case GraphicsConfig::BackendType::Direct2D:
+            LITHIUM_LOG_INFO("Trying Direct2D backend...");
             #ifdef LITHIUM_HAS_DIRECT2D
+            LITHIUM_LOG_INFO("LITHIUM_HAS_DIRECT2D is defined");
             if (is_direct2d_available()) {
+                LITHIUM_LOG_INFO("Direct2D is available, creating context");
                 return create_direct2d(window, config);
             }
+            LITHIUM_LOG_WARN("Direct2D not available");
+            #else
+            LITHIUM_LOG_ERROR("LITHIUM_HAS_DIRECT2D is NOT defined");
             #endif
             return make_error(BackendError::NotSupported);
 
         case GraphicsConfig::BackendType::Software:
+            LITHIUM_LOG_INFO("Creating software backend");
             return create_software(window);
 
         case GraphicsConfig::BackendType::Auto:
@@ -244,14 +256,18 @@ GraphicsBackendFactory::create_opengl(Window* window, const GraphicsConfig& conf
 BackendResult<std::unique_ptr<GraphicsContext>>
 GraphicsBackendFactory::create_direct2d(Window* window, const GraphicsConfig& config) {
     #ifdef LITHIUM_HAS_DIRECT2D
+    LITHIUM_LOG_INFO("Attempting to create Direct2D context...");
     auto context = D2DGraphicsContext::create(window, config);
     if (context) {
+        LITHIUM_LOG_INFO("Direct2D context created successfully");
         return context;
     }
+    LITHIUM_LOG_ERROR("Direct2D context creation returned nullptr");
     return make_error(BackendError::InitializationFailed);
     #else
     (void)window;
     (void)config;
+    LITHIUM_LOG_ERROR("Direct2D support not compiled in");
     return make_error(BackendError::NotSupported);
     #endif
 }
@@ -259,7 +275,7 @@ GraphicsBackendFactory::create_direct2d(Window* window, const GraphicsConfig& co
 BackendResult<std::unique_ptr<GraphicsContext>>
 GraphicsBackendFactory::create_software(Window* window) {
     // Software backend is always available
-    // Use the existing SoftwareGraphicsContext
+    // Use GraphicsContext::create which creates a software context
     auto context = GraphicsContext::create(window);
     if (context) {
         return context;
@@ -291,9 +307,17 @@ bool GraphicsBackendFactory::is_direct2d_available() {
         // Check for D2D1.dll and D3D11.dll
         HMODULE d2d1_module = GetModuleHandleA("d2d1.dll");
         HMODULE d3d11_module = GetModuleHandleA("d3d11.dll");
-        return d2d1_module != nullptr && d3d11_module != nullptr;
+
+        LITHIUM_LOG_INFO("Checking Direct2D availability:");
+        LITHIUM_LOG_INFO("  d2d1.dll: {}", d2d1_module != nullptr ? "LOADED" : "NOT LOADED");
+        LITHIUM_LOG_INFO("  d3d11.dll: {}", d3d11_module != nullptr ? "LOADED" : "NOT LOADED");
+
+        bool available = d2d1_module != nullptr && d3d11_module != nullptr;
+        LITHIUM_LOG_INFO("  Direct2D available: {}", available ? "YES" : "NO");
+        return available;
     #else
         // Direct2D is Windows-only
+        LITHIUM_LOG_INFO("Direct2D not available: not Windows platform");
         return false;
     #endif
 }

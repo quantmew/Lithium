@@ -132,8 +132,8 @@ private:
 // Factory
 // ============================================================================
 
-std::unique_ptr<GraphicsContext> GraphicsContext::create(Window* window) {
-    return std::make_unique<Win32GraphicsContext>(window);
-}
+// Note: GraphicsContext::create is now implemented in graphics_context.cpp
+// to support backend selection. Win32GraphicsContext is created through
+// the GraphicsBackendFactory for Windows-specific backends.
 
 } // namespace lithium::platform

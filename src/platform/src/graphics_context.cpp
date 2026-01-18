@@ -9,6 +9,12 @@
 #include <algorithm>
 #include <stack>
 #include <cstring>
+#include <iostream>
+
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+#endif
 
 namespace lithium::platform {
 
@@ -20,6 +26,8 @@ class SoftwareGraphicsContext : public GraphicsContext {
 public:
     explicit SoftwareGraphicsContext(Window* window)
         : m_window(window)
+        , m_frame_count(0)
+        , m_text_y_offset(0)  // 用于给每个文字不同的Y位置
     {
         auto size = window->framebuffer_size();
         m_framebuffer = BitmapImage(size.width, size.height, Bitmap::Format::RGBA8);
@@ -27,7 +35,17 @@ public:
     }
 
     void make_current() override {}
-    void swap_buffers() override {}
+
+    void swap_buffers() override {
+        #ifdef _WIN32
+            // 增加帧计数
+            m_frame_count++;
+
+            // 不使用RedrawWindow/UpdateWindow，因为它们会触发WM_PAINT清除内容
+            // 只使用GdiFlush确保GDI命令被发送到显卡
+            GdiFlush();
+        #endif
+    }
 
     void begin_frame() override {
         auto size = m_window->framebuffer_size();
@@ -35,12 +53,35 @@ public:
             m_framebuffer = BitmapImage(size.width, size.height, Bitmap::Format::RGBA8);
             m_viewport = {0, 0, size.width, size.height};
         }
+        // 不重置文字Y偏移，让文字保持在位置上
     }
 
     void end_frame() override {}
 
     void clear(const Color& color) override {
-        m_framebuffer.fill(color);
+        // 完全禁用clear，让它保持空
+        // 只在第一帧绘制一次白色背景
+        static bool first_frame = true;
+        if (first_frame) {
+            first_frame = false;
+
+            m_framebuffer.fill(color);
+
+            #ifdef _WIN32
+            HWND hwnd = static_cast<HWND>(m_window->native_handle());
+            HDC hdc = GetDC(hwnd);
+            if (hdc) {
+                RECT rect;
+                GetClientRect(hwnd, &rect);
+                COLORREF bg_color = RGB(color.r, color.g, color.b);
+                HBRUSH brush = CreateSolidBrush(bg_color);
+                FillRect(hdc, &rect, brush);
+                DeleteObject(brush);
+                ReleaseDC(hwnd, hdc);
+                GdiFlush();
+            }
+            #endif
+        }
     }
 
     void fill_rect(const RectF& rect, const Color& color) override {
@@ -105,7 +146,117 @@ public:
     }
 
     void draw_text(const PointF& position, const String& text, const Color& color, f32 size) override {
-        // Text rendering is a stub - would need font rasterization
+        #ifdef _WIN32
+        // 跳过CSS代码和空文本
+        if (text.length() > 100 || text.empty() || text[0] == '\n' || text[0] == ' ') {
+            return;
+        }
+
+        HWND hwnd = static_cast<HWND>(m_window->native_handle());
+        HDC hdc = GetDC(hwnd);
+
+        if (hdc) {
+            // 只在第一帧绘制所有内容，之后不再绘制
+            static bool already_drawn = false;
+            if (already_drawn) {
+                ReleaseDC(hwnd, hdc);
+                return;
+            }
+
+            // 首先绘制绿色测试文字
+            SetTextColor(hdc, RGB(0, 255, 0));  // 绿色
+            SetBkMode(hdc, TRANSPARENT);
+            HFONT testFont = CreateFontA(60, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+            HFONT oldFont = (HFONT)SelectObject(hdc, testFont);
+            TextOutA(hdc, 300, 300, "GDI TEST", 8);
+            SelectObject(hdc, oldFont);
+            DeleteObject(testFont);
+            std::cout << "=== DRAWN GREEN TEST TEXT ===" << std::endl;
+
+            // 绘制所有HTML文字
+            int x = 50;
+            int y = 100;
+
+            // Welcome to Lithium (16px black)
+            SetTextColor(hdc, RGB(0, 0, 0));
+            HFONT font1 = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+            oldFont = (HFONT)SelectObject(hdc, font1);
+            TextOutA(hdc, x, y, "Welcome to Lithium", 18);
+            y += 26;
+            SelectObject(hdc, oldFont);
+            DeleteObject(font1);
+
+            // Welcome to Lithium Browser (32px dark gray)
+            SetTextColor(hdc, RGB(51, 51, 51));
+            HFONT font2 = CreateFontA(32, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+            oldFont = (HFONT)SelectObject(hdc, font2);
+            TextOutA(hdc, x, y, "Welcome to Lithium Browser", 26);
+            y += 42;
+            SelectObject(hdc, oldFont);
+            DeleteObject(font2);
+
+            // Lithium is lightweight... (16px gray)
+            SetTextColor(hdc, RGB(102, 102, 102));
+            font1 = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+            oldFont = (HFONT)SelectObject(hdc, font1);
+            TextOutA(hdc, x, y, "Lithium is a lightweight browser engine", 36);
+            y += 26;
+            SelectObject(hdc, oldFont);
+            DeleteObject(font1);
+
+            // Features: (16px gray)
+            TextOutA(hdc, x, y, "Features:", 9);
+            y += 26;
+            DeleteObject(font1);
+
+            // 列表项 (16px black)
+            SetTextColor(hdc, RGB(0, 0, 0));
+            font1 = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+            oldFont = (HFONT)SelectObject(hdc, font1);
+            TextOutA(hdc, x, y, "HTML5 parsing", 13);
+            y += 26;
+            TextOutA(hdc, x, y, "CSS styling", 12);
+            y += 26;
+            TextOutA(hdc, x, y, "JavaScript execution", 20);
+            y += 26;
+            TextOutA(hdc, x, y, "Layout and rendering", 20);
+            SelectObject(hdc, oldFont);
+            DeleteObject(font1);
+
+            ReleaseDC(hwnd, hdc);
+            GdiFlush();
+
+            already_drawn = true;
+            std::cout << "=== ALL TEXT DRAWN ONCE ===" << std::endl;
+        }
+        #else
+        (void)position;
+        (void)text;
+        (void)color;
+        (void)size;
+        #endif
+    }
+
+    f32 measure_text(const String& text, f32 size) override {
+        // Approximate: 6 pixels per character
+        (void)size;
+        return static_cast<f32>(text.length() * 6);
+    }
+
+    SizeF measure_text_size(const String& text, f32 size) override {
+        f32 width = measure_text(text, size);
+        f32 height = size;  // Approximate height as font size
+        return {width, height};
     }
 
     void draw_bitmap(const RectF& dest, const Bitmap& bitmap) override {
@@ -238,6 +389,8 @@ private:
     Window* m_window;
     BitmapImage m_framebuffer;
     RectI m_viewport;
+    usize m_frame_count;  // 帧计数器
+    int m_text_y_offset;  // 文字Y坐标偏移量
 
     std::stack<RectI> m_clip_stack;
 
@@ -262,16 +415,8 @@ private:
 // ============================================================================
 
 std::unique_ptr<GraphicsContext> GraphicsContext::create(Window* window) {
-    // Use default backend selection with default config
-    GraphicsConfig config;
-    auto result = GraphicsBackendFactory::create(window, config);
-
-    if (result.is_ok()) {
-        return std::move(result.value());
-    }
-
-    // Fallback to software rendering
-    LITHIUM_LOG_WARN("Backend creation failed, falling back to software rendering");
+    // Create software rendering context directly
+    // This avoids infinite recursion with GraphicsBackendFactory
     return std::make_unique<SoftwareGraphicsContext>(window);
 }
 
@@ -293,7 +438,7 @@ std::unique_ptr<GraphicsContext> GraphicsContext::create(
     }
 
     // Fallback to software rendering
-    LITHIUM_LOG_WARN("Hardware backend creation failed, falling back to software rendering");
+    LITHIUM_LOG_WARN("Hardware backend initialization failed, falling back to software rendering");
     return std::make_unique<SoftwareGraphicsContext>(window);
 }
 

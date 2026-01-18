@@ -3,7 +3,9 @@
  */
 
 #include "lithium/render/paint_context.hpp"
+#include "lithium/core/logger.hpp"
 #include <type_traits>
+#include <iostream>
 
 namespace lithium::render {
 
@@ -12,6 +14,9 @@ PaintContext::PaintContext(platform::GraphicsContext& graphics, text::FontContex
     , m_fonts(fonts) {}
 
 void PaintContext::execute(const DisplayList& display_list) {
+    usize command_count = display_list.commands().size();
+    std::cout << "PaintContext::execute: " << command_count << " commands in display list" << std::endl;
+
     for (const auto& cmd : display_list.commands()) {
         execute_command(cmd);
     }
@@ -84,12 +89,19 @@ void PaintContext::execute_command(const DisplayCommand& cmd) {
     std::visit([this](auto&& command) {
         using T = std::decay_t<decltype(command)>;
         if constexpr (std::is_same_v<T, FillRectCommand>) {
+            LITHIUM_LOG_DEBUG("FillRect: x={}, y={}, w={}, h, color=({},{},{},{})",
+                command.rect.x, command.rect.y, command.rect.width, command.rect.height,
+                command.color.r, command.color.g, command.color.b, command.color.a);
             fill_rect(command.rect, command.color);
         } else if constexpr (std::is_same_v<T, StrokeRectCommand>) {
             stroke_rect(command.rect, command.color, command.width);
         } else if constexpr (std::is_same_v<T, DrawLineCommand>) {
             draw_line(command.from, command.to, command.color, command.width);
         } else if constexpr (std::is_same_v<T, DrawTextCommand>) {
+            LITHIUM_LOG_INFO("DrawText: text='{}' pos=({},{}) size={} color=({},{},{},{})",
+                command.text, command.position.x, command.position.y,
+                command.font_size, command.color.r, command.color.g,
+                command.color.b, command.color.a);
             draw_text(command.position, command.text, command.font_family, command.font_size, command.color);
         } else if constexpr (std::is_same_v<T, DrawImageCommand>) {
             // Image drawing stub

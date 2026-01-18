@@ -95,6 +95,22 @@ public:
 
     void draw_text(const PointF& position, const String& text, const Color& color, f32 size) override {
         // Text rendering stub
+        (void)position;
+        (void)text;
+        (void)color;
+        (void)size;
+    }
+
+    f32 measure_text(const String& text, f32 size) override {
+        // Approximate: 6 pixels per character
+        (void)size;
+        return static_cast<f32>(text.length() * 6);
+    }
+
+    SizeF measure_text_size(const String& text, f32 size) override {
+        f32 width = measure_text(text, size);
+        f32 height = size;  // Approximate height as font size
+        return {width, height};
     }
 
     void draw_bitmap(const RectF& dest, const Bitmap& bitmap) override {
@@ -248,9 +264,8 @@ private:
 // Factory
 // ============================================================================
 
-std::unique_ptr<GraphicsContext> GraphicsContext::create(Window* window) {
-    return std::make_unique<SoftwareGraphicsContext>(window);
-}
+// Note: GraphicsContext::create is now implemented in graphics_context.cpp
+// to support backend selection.
 
 // ============================================================================
 // BitmapImage implementation

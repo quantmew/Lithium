@@ -46,6 +46,10 @@ public:
     // Text drawing (basic - full text rendering is in text module)
     virtual void draw_text(const PointF& position, const String& text, const Color& color, f32 size) = 0;
 
+    // Text measurement
+    [[nodiscard]] virtual f32 measure_text(const String& text, f32 size) = 0;
+    [[nodiscard]] virtual SizeF measure_text_size(const String& text, f32 size) = 0;
+
     // Bitmap drawing
     struct Bitmap {
         u8* data;

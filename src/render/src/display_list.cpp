@@ -3,7 +3,9 @@
  */
 
 #include "lithium/render/display_list.hpp"
+#include "lithium/core/logger.hpp"
 #include <algorithm>
+#include <iostream>
 
 namespace lithium::render {
 
@@ -57,27 +59,42 @@ DisplayListBuilder::DisplayListBuilder() = default;
 
 DisplayList DisplayListBuilder::build(const layout::LayoutBox& root) {
     m_display_list.clear();
+    std::cout << "DisplayListBuilder::build: starting build, root is_text=" << root.is_text() << std::endl;
     paint_box(root);
+    std::cout << "DisplayListBuilder::build: before optimize, " << m_display_list.commands().size() << " commands" << std::endl;
     m_display_list.optimize();
+    std::cout << "DisplayListBuilder::build: after optimize, " << m_display_list.commands().size() << " commands" << std::endl;
     return std::move(m_display_list);
 }
 
 void DisplayListBuilder::paint_box(const layout::LayoutBox& box) {
     // Skip boxes with no dimensions
-    if (box.dimensions().border_box().width <= 0 ||
-        box.dimensions().border_box().height <= 0) {
-        return;
+    f32 width = box.dimensions().border_box().width;
+    f32 height = box.dimensions().border_box().height;
+    bool is_text = box.is_text();
+
+    // TEMPORARY: Skip dimension check to debug layout tree structure
+    // if (!is_text && (width <= 0 || height <= 0)) {
+    //     return;
+    // }
+
+    std::cout << "DisplayListBuilder::paint_box: box "
+              << width << "x" << height << " is_text=" << is_text;
+
+    if (is_text) {
+        std::cout << " text='" << box.text().c_str() << "'";
     }
+    std::cout << std::endl;
 
     // Paint in order:
-    // 1. Background
+    // 1. Background (only for non-transparent backgrounds)
     paint_background(box);
 
     // 2. Borders
     paint_borders(box);
 
     // 3. Content (text)
-    if (box.is_text()) {
+    if (is_text && !box.text().empty()) {
         paint_text(box);
     }
 
@@ -89,13 +106,20 @@ void DisplayListBuilder::paint_background(const layout::LayoutBox& box) {
     const auto& style = box.style();
     const auto& d = box.dimensions();
 
-    // Skip transparent backgrounds
-    if (style.background_color.a == 0) {
-        return;
+    // Use white background if transparent (temporary fix)
+    Color bg_color = style.background_color;
+    if (bg_color.a == 0) {
+        bg_color = Color::white();  // Default to white
+        std::cout << "DisplayListBuilder::paint_background: using default white background" << std::endl;
     }
 
     RectF rect = d.border_box();
-    m_display_list.push(FillRectCommand{rect, style.background_color});
+    std::cout << "DisplayListBuilder::paint_background: filling rect ("
+              << rect.x << "," << rect.y << "," << rect.width << "," << rect.height
+              << ") color=(" << (int)bg_color.r << ","
+              << (int)bg_color.g << "," << (int)bg_color.b << ","
+              << (int)bg_color.a << ")" << std::endl;
+    m_display_list.push(FillRectCommand{rect, bg_color});
 }
 
 void DisplayListBuilder::paint_borders(const layout::LayoutBox& box) {
@@ -193,6 +217,7 @@ void DisplayListBuilder::paint_text(const layout::LayoutBox& box) {
     const String& text = box.text();
 
     if (text.empty()) {
+        std::cout << "DisplayListBuilder::paint_text: skipping empty text" << std::endl;
         return;
     }
 
@@ -205,6 +230,13 @@ void DisplayListBuilder::paint_text(const layout::LayoutBox& box) {
         font_family = style.font_family.front();
     }
     font_size = static_cast<f32>(style.font_size.to_px(0, 16.0, 0, 0));
+
+    std::cout << "DisplayListBuilder::paint_text: text='" << text.c_str()
+              << "' pos=(" << d.content.x << "," << (d.content.y + font_size)
+              << ") font_family='" << font_family.c_str()
+              << "' font_size=" << font_size
+              << " color=(" << (int)style.color.r << "," << (int)style.color.g << ","
+              << (int)style.color.b << "," << (int)style.color.a << ")" << std::endl;
 
     m_display_list.push(DrawTextCommand{
         {d.content.x, d.content.y + font_size},  // Baseline position
