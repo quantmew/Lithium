@@ -60,7 +60,7 @@ public:
     D2DTextureCache() = default;
     ~D2DTextureCache() = default;
 
-    ID2D1Bitmap* upload_bitmap(const Bitmap& bitmap, ID2D1DeviceContext* context) {
+    ID2D1Bitmap* upload_bitmap(const GraphicsContext::Bitmap& bitmap, ID2D1DeviceContext* context) {
         // TODO: Implement texture upload
         (void)bitmap;
         (void)context;
@@ -76,40 +76,13 @@ private:
 };
 
 // ============================================================================
-// Direct2D Text Renderer (simplified internal implementation)
-// ============================================================================
-
-class D2DTextRenderer {
-public:
-    D2DTextRenderer() = default;
-    ~D2DTextRenderer() = default;
-
-    void draw_text(
-        ID2D1DeviceContext* context,
-        const PointF& position,
-        const String& text,
-        const Color& color,
-        f32 size
-    ) {
-        // TODO: Implement text rendering with FreeType
-        (void)context;
-        (void)position;
-        (void)text;
-        (void)color;
-        (void)size;
-    }
-
-private:
-};
-
-// ============================================================================
 // D2DGraphicsContext Implementation
 // ============================================================================
 
 std::unique_ptr<D2DGraphicsContext>
 D2DGraphicsContext::create(Window* window, const GraphicsConfig& config) {
     if (!window) {
-        LITHIUM_LOG_ERROR("Invalid window pointer");
+        LITHIUM_LOG_ERROR_FMT("Invalid window pointer");
         return nullptr;
     }
 
@@ -120,13 +93,13 @@ D2DGraphicsContext::create(Window* window, const GraphicsConfig& config) {
         );
 
         if (!context->initialize(config)) {
-            LITHIUM_LOG_ERROR("Failed to initialize Direct2D context");
+            LITHIUM_LOG_ERROR_FMT("Failed to initialize Direct2D context");
             return nullptr;
         }
 
         return context;
     #else
-        LITHIUM_LOG_ERROR("Direct2D is only supported on Windows");
+        LITHIUM_LOG_ERROR_FMT("Direct2D is only supported on Windows");
         (void)config;
         return nullptr;
     #endif
@@ -150,31 +123,31 @@ bool D2DGraphicsContext::initialize(const GraphicsConfig& config) {
     #ifdef _WIN32
         // Create Direct2D factory
         if (!create_d2d_factory()) {
-            LITHIUM_LOG_ERROR("Failed to create Direct2D factory");
+            LITHIUM_LOG_ERROR_FMT("Failed to create Direct2D factory");
             return false;
         }
 
         // Create Direct3D device
         if (!create_d3d_device()) {
-            LITHIUM_LOG_ERROR("Failed to create Direct3D device");
+            LITHIUM_LOG_ERROR_FMT("Failed to create Direct3D device");
             return false;
         }
 
         // Create Direct2D device
         if (!create_d2d_device()) {
-            LITHIUM_LOG_ERROR("Failed to create Direct2D device");
+            LITHIUM_LOG_ERROR_FMT("Failed to create Direct2D device");
             return false;
         }
 
         // Create swap chain
         if (!create_swap_chain()) {
-            LITHIUM_LOG_ERROR("Failed to create swap chain");
+            LITHIUM_LOG_ERROR_FMT("Failed to create swap chain");
             return false;
         }
 
         // Create back buffer
         if (!create_back_buffer()) {
-            LITHIUM_LOG_ERROR("Failed to create back buffer");
+            LITHIUM_LOG_ERROR_FMT("Failed to create back buffer");
             return false;
         }
 
@@ -258,7 +231,7 @@ bool D2DGraphicsContext::create_d2d_factory() {
 
         HMODULE d2d1_module = LoadLibraryA("d2d1.dll");
         if (!d2d1_module) {
-            LITHIUM_LOG_ERROR("Failed to load d2d1.dll");
+            LITHIUM_LOG_ERROR_FMT("Failed to load d2d1.dll");
             return false;
         }
 
@@ -267,7 +240,7 @@ bool D2DGraphicsContext::create_d2d_factory() {
         );
 
         if (!D2D1CreateFactory) {
-            LITHIUM_LOG_ERROR("Failed to get D2D1CreateFactory function");
+            LITHIUM_LOG_ERROR_FMT("Failed to get D2D1CreateFactory function");
             FreeLibrary(d2d1_module);
             return false;
         }
@@ -280,7 +253,7 @@ bool D2DGraphicsContext::create_d2d_factory() {
         );
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("D2D1CreateFactory failed with HRESULT: 0x%X", hr);
+            LITHIUM_LOG_ERROR_FMT("D2D1CreateFactory failed with HRESULT: 0x%X", hr);
             return false;
         }
 
@@ -307,7 +280,7 @@ bool D2DGraphicsContext::create_d3d_device() {
 
         HMODULE d3d11_module = LoadLibraryA("d3d11.dll");
         if (!d3d11_module) {
-            LITHIUM_LOG_ERROR("Failed to load d3d11.dll");
+            LITHIUM_LOG_ERROR_FMT("Failed to load d3d11.dll");
             return false;
         }
 
@@ -316,7 +289,7 @@ bool D2DGraphicsContext::create_d3d_device() {
         );
 
         if (!D3D11CreateDevice) {
-            LITHIUM_LOG_ERROR("Failed to get D3D11CreateDevice function");
+            LITHIUM_LOG_ERROR_FMT("Failed to get D3D11CreateDevice function");
             FreeLibrary(d3d11_module);
             return false;
         }
@@ -346,7 +319,7 @@ bool D2DGraphicsContext::create_d3d_device() {
         );
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("D3D11CreateDevice failed with HRESULT: 0x%X", hr);
+            LITHIUM_LOG_ERROR_FMT("D3D11CreateDevice failed with HRESULT: 0x%X", hr);
             return false;
         }
 
@@ -371,7 +344,7 @@ bool D2DGraphicsContext::create_d2d_device() {
         );
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to query DXGI device");
+            LITHIUM_LOG_ERROR_FMT("Failed to query DXGI device");
             return false;
         }
 
@@ -384,7 +357,7 @@ bool D2DGraphicsContext::create_d2d_device() {
         dxgi_device->Release();
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to create Direct2D device");
+            LITHIUM_LOG_ERROR_FMT("Failed to create Direct2D device");
             return false;
         }
 
@@ -395,7 +368,7 @@ bool D2DGraphicsContext::create_d2d_device() {
         );
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to create Direct2D device context");
+            LITHIUM_LOG_ERROR_FMT("Failed to create Direct2D device context");
             return false;
         }
 
@@ -419,7 +392,7 @@ bool D2DGraphicsContext::create_swap_chain() {
         );
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to query DXGI device");
+            LITHIUM_LOG_ERROR_FMT("Failed to query DXGI device");
             return false;
         }
 
@@ -428,7 +401,7 @@ bool D2DGraphicsContext::create_swap_chain() {
         dxgi_device->Release();
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to get DXGI adapter");
+            LITHIUM_LOG_ERROR_FMT("Failed to get DXGI adapter");
             return false;
         }
 
@@ -437,7 +410,7 @@ bool D2DGraphicsContext::create_swap_chain() {
         dxgi_adapter->Release();
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to get DXGI factory");
+            LITHIUM_LOG_ERROR_FMT("Failed to get DXGI factory");
             return false;
         }
 
@@ -471,7 +444,7 @@ bool D2DGraphicsContext::create_swap_chain() {
         dxgi_factory->Release();
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to create swap chain");
+            LITHIUM_LOG_ERROR_FMT("Failed to create swap chain");
             return false;
         }
 
@@ -496,7 +469,7 @@ bool D2DGraphicsContext::create_back_buffer() {
         );
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to get swap chain buffer");
+            LITHIUM_LOG_ERROR_FMT("Failed to get swap chain buffer");
             return false;
         }
 
@@ -515,7 +488,7 @@ bool D2DGraphicsContext::create_back_buffer() {
         surface->Release();
 
         if (FAILED(hr)) {
-            LITHIUM_LOG_ERROR("Failed to create back buffer bitmap");
+            LITHIUM_LOG_ERROR_FMT("Failed to create back buffer bitmap");
             return false;
         }
 
@@ -729,6 +702,17 @@ SizeF D2DGraphicsContext::measure_text_size(const String& text, f32 size) {
     #endif
 
     return {width, height};
+}
+
+void D2DGraphicsContext::draw_textured_rect(const RectF& dest, unsigned int texture_id, const RectF& src) {
+    // Direct2D has native bitmap support, so we can just use fill_rect
+    // For actual textured rendering, we'd need to load the texture from the ID
+    // For now, this is a placeholder
+    (void)texture_id;
+    (void)src;
+    // TODO: Implement actual textured rendering in Direct2D
+    // For now, just draw a placeholder rectangle
+    fill_rect(dest, {255, 255, 255, 128});
 }
 
 void D2DGraphicsContext::draw_bitmap(const RectF& dest, const Bitmap& bitmap) {

@@ -123,23 +123,15 @@ void InlineFormattingContext::break_lines(std::vector<LayoutBox*>& boxes) {
             }
             f32 baseline = height * 0.8f;
 
-            // Try to use font context for accurate measurement
+            // Try to use font backend for accurate measurement
             f32 space_width = font_px * 0.25f;  // Default approximation
             f32 avg_char_width = font_px * 0.5f;  // Default approximation
 
-            if (m_context.font_context) {
-                text::FontDescription desc;
-                desc.size = font_px;
-                desc.family = box->style().font_family.empty() ? String("sans-serif") : box->style().font_family[0];
-                desc.bold = (box->style().font_weight == css::FontWeight::Bold ||
-                             box->style().font_weight == css::FontWeight::W700 ||
-                             box->style().font_weight == css::FontWeight::W700);
-                desc.italic = (box->style().font_style == css::FontStyle::Italic);
-
-                if (auto font = m_context.font_context->get_font(desc)) {
-                    space_width = font->measure_char(U' ');
-                    avg_char_width = font->measure_text(text) / static_cast<f32>(text.size());
-                }
+            if (m_context.font_backend) {
+                // TODO: Use beryl FontManager to get font and measure text
+                // For now, use simple approximation
+                space_width = font_px * 0.25f;
+                avg_char_width = font_px * 0.5f;
             }
 
             // Split text into words
@@ -159,15 +151,17 @@ void InlineFormattingContext::break_lines(std::vector<LayoutBox*>& boxes) {
                 // Measure word accurately if font context available
                 f32 word_width = static_cast<f32>(word.size()) * avg_char_width;
 
-                if (m_context.font_context) {
-                    text::FontDescription desc;
+                if (m_context.font_backend) {
+                    beryl::FontDescription desc;
                     desc.size = font_px;
                     desc.family = box->style().font_family.empty() ? String("sans-serif") : box->style().font_family[0];
-                    desc.bold = (box->style().font_weight == css::FontWeight::Bold ||
-                                 box->style().font_weight == css::FontWeight::W700);
-                    desc.italic = (box->style().font_style == css::FontStyle::Italic);
+                    desc.weight = (box->style().font_weight == css::FontWeight::Bold ||
+                                  box->style().font_weight == css::FontWeight::W700)
+                        ? beryl::FontWeight::Bold : beryl::FontWeight::Normal;
+                    desc.style = (box->style().font_style == css::FontStyle::Italic)
+                        ? beryl::FontStyle::Italic : beryl::FontStyle::Normal;
 
-                    if (auto font = m_context.font_context->get_font(desc)) {
+                    if (auto font = m_context.font_backend->get_system_font(desc)) {
                         word_width = font->measure_text(word);
                     }
                 }
@@ -226,15 +220,17 @@ f32 InlineFormattingContext::measure_text(const String& text, const LayoutBox& b
     f32 font_px = computed_font_size_for(box, m_context);
 
     // Try to use font context for accurate measurement
-    if (m_context.font_context) {
-        text::FontDescription desc;
+    if (m_context.font_backend) {
+        beryl::FontDescription desc;
         desc.size = font_px;
         desc.family = box.style().font_family.empty() ? String("sans-serif") : box.style().font_family[0];
-        desc.bold = (box.style().font_weight == css::FontWeight::Bold ||
-                     box.style().font_weight == css::FontWeight::W700);
-        desc.italic = (box.style().font_style == css::FontStyle::Italic);
+        desc.weight = (box.style().font_weight == css::FontWeight::Bold ||
+                      box.style().font_weight == css::FontWeight::W700)
+            ? beryl::FontWeight::Bold : beryl::FontWeight::Normal;
+        desc.style = (box.style().font_style == css::FontStyle::Italic)
+            ? beryl::FontStyle::Italic : beryl::FontStyle::Normal;
 
-        if (auto font = m_context.font_context->get_font(desc)) {
+        if (auto font = m_context.font_backend->get_system_font(desc)) {
             return font->measure_text(text);
         }
     }
@@ -277,15 +273,17 @@ f32 measure_inline_width(LayoutBox& box, const LayoutContext& context) {
 
     if (box.is_text()) {
         // Try to use font context for accurate measurement
-        if (context.font_context) {
-            text::FontDescription desc;
+        if (context.font_backend) {
+            beryl::FontDescription desc;
             desc.size = font_px;
             desc.family = style.font_family.empty() ? String("sans-serif") : style.font_family[0];
-            desc.bold = (style.font_weight == css::FontWeight::Bold ||
-                         style.font_weight == css::FontWeight::W700);
-            desc.italic = (style.font_style == css::FontStyle::Italic);
+            desc.weight = (style.font_weight == css::FontWeight::Bold ||
+                          style.font_weight == css::FontWeight::W700)
+                ? beryl::FontWeight::Bold : beryl::FontWeight::Normal;
+            desc.style = (style.font_style == css::FontStyle::Italic)
+                ? beryl::FontStyle::Italic : beryl::FontStyle::Normal;
 
-            if (auto font = context.font_context->get_font(desc)) {
+            if (auto font = context.font_backend->get_system_font(desc)) {
                 return font->measure_text(box.text());
             }
         }

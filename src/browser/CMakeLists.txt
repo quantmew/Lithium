@@ -18,9 +18,9 @@ target_link_libraries(lithium_browser PRIVATE
     lithium_html
     lithium_css
     lithium_js
-    lithium_text
     lithium_layout
-    lithium_render
+    lithium_beryl
+    lithium_mica
     lithium_bindings
     lithium_network
     lithium_compiler_options

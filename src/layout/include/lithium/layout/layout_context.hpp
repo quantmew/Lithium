@@ -1,7 +1,7 @@
 #pragma once
 
 #include "box.hpp"
-#include "lithium/text/font.hpp"
+#include "lithium/beryl/beryl.hpp"
 
 namespace lithium::layout {
 
@@ -21,8 +21,8 @@ struct LayoutContext {
     // Root font size (for rem units)
     f32 root_font_size{16};
 
-    // Font context for text measurement
-    text::FontContext* font_context{nullptr};
+    // Font backend for text measurement (using beryl)
+    beryl::IFontBackend* font_backend{nullptr};
 };
 
 // ============================================================================
@@ -36,8 +36,8 @@ public:
     // Perform layout on a tree
     void layout(LayoutBox& root, const LayoutContext& context);
 
-    // Get font context
-    [[nodiscard]] text::FontContext& font_context() { return *m_font_context; }
+    // Get font backend
+    [[nodiscard]] beryl::IFontBackend* font_backend() { return m_font_backend.get(); }
 
 private:
     void layout_box(LayoutBox& box, const LayoutContext& context);
@@ -59,7 +59,7 @@ private:
                                       f32 root_font_size, f32 viewport_width,
                                       f32 viewport_height) const;
 
-    std::unique_ptr<text::FontContext> m_font_context;
+    std::unique_ptr<beryl::IFontBackend> m_font_backend;
 };
 
 } // namespace lithium::layout

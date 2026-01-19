@@ -44,8 +44,16 @@ f32 computed_font_size_for(const LayoutBox& box, const LayoutContext& context) {
 
 } // anonymous namespace
 
-LayoutEngine::LayoutEngine()
-    : m_font_context(std::make_unique<text::FontContext>()) {}
+LayoutEngine::LayoutEngine() {
+    // Initialize beryl font backend
+    m_font_backend = beryl::initialize_default_font_backend();
+    if (m_font_backend) {
+        std::cout << "LayoutEngine: Initialized beryl font backend ("
+                  << beryl::font_backend_name(m_font_backend->type()) << ")" << std::endl;
+    } else {
+        std::cerr << "LayoutEngine: Failed to initialize font backend" << std::endl;
+    }
+}
 
 void LayoutEngine::layout(LayoutBox& root, const LayoutContext& context) {
     layout_box(root, context);

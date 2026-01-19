@@ -61,6 +61,13 @@ public:
         // TODO: Implement draw_line
     }
 
+    void draw_textured_rect(const RectF& dest, unsigned int texture_id, const RectF& src) override {
+        // TODO: Implement textured rendering
+        (void)dest;
+        (void)texture_id;
+        (void)src;
+    }
+
     void draw_text(const PointF& position, const String& text, const Color& color, f32 size) override {
         // TODO: Implement draw_text
     }

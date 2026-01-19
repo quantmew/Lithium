@@ -306,21 +306,12 @@ f32 BlockFormattingContext::layout_inline_sequence(LayoutBox& container, const s
                 m_context.viewport_width,
                 m_context.viewport_height));
 
-            // Use font context for accurate measurement if available
+            // Use font backend for accurate measurement if available
             f32 text_width;
-            if (m_context.font_context) {
-                text::FontDescription desc;
-                desc.size = font_px;
-                desc.family = style.font_family.empty() ? String("sans-serif") : style.font_family[0];
-                desc.bold = (style.font_weight == css::FontWeight::Bold ||
-                             style.font_weight == css::FontWeight::W700);
-                desc.italic = (style.font_style == css::FontStyle::Italic);
-
-                if (auto font = m_context.font_context->get_font(desc)) {
-                    text_width = font->measure_text(child->text());
-                } else {
-                    text_width = static_cast<f32>(child->text().size()) * font_px * 0.5f;
-                }
+            if (m_context.font_backend) {
+                // TODO: Use beryl FontManager to get font and measure text
+                // For now, use simple approximation
+                text_width = static_cast<f32>(child->text().size()) * font_px * 0.5f;
             } else {
                 text_width = static_cast<f32>(child->text().size()) * font_px * 0.5f;
             }

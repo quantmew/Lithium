@@ -7,10 +7,13 @@
 #include "lithium/js/vm.hpp"
 #include "lithium/layout/box.hpp"
 #include "lithium/layout/layout_context.hpp"
-#include "lithium/render/compositor.hpp"
 #include "lithium/network/resource_loader.hpp"
 #include "lithium/platform/window.hpp"
 #include "lithium/bindings/dom_bindings.hpp"
+
+// Mica graphics engine
+#include "lithium/mica/mica.hpp"
+#include "lithium/beryl/beryl.hpp"
 
 namespace lithium::browser {
 
@@ -49,7 +52,12 @@ public:
 
     // Rendering
     void resize(i32 width, i32 height);
-    void render(platform::GraphicsContext& graphics);
+    void render();  // Renders using mica engine
+
+    // Graphics setup (called by main to pass mica components)
+    void set_graphics_context(
+        std::unique_ptr<mica::Context> context,
+        std::unique_ptr<mica::Painter> painter);
 
     // JavaScript
     void execute_script(const String& script);
@@ -83,6 +91,9 @@ private:
     void invalidate_layout();
     void invalidate_render();
 
+    // Rendering helpers
+    void render_layout_box(mica::Painter& painter, const layout::LayoutBox& box);
+
     // Document
     RefPtr<dom::Document> m_document;
 
@@ -101,8 +112,10 @@ private:
     std::unique_ptr<layout::LayoutBox> m_layout_tree;
     layout::LayoutEngine m_layout_engine;
 
-    // Rendering
-    render::Compositor m_compositor;
+    // Graphics (Mica)
+    // Note: mica::Engine is owned by main.cpp, Engine only holds context and painter
+    std::unique_ptr<mica::Context> m_graphics_context;
+    std::unique_ptr<mica::Painter> m_painter;
     i32 m_viewport_width{800};
     i32 m_viewport_height{600};
 

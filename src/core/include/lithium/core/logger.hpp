@@ -8,6 +8,7 @@
 #include <sstream>
 #include <vector>
 #include <memory>
+#include <format>
 
 namespace lithium {
 
@@ -121,6 +122,49 @@ public:
     void error(std::string_view msg, SourceLocation loc = SourceLocation::current());
     void fatal(std::string_view msg, SourceLocation loc = SourceLocation::current());
 
+    // Format-style logging (C++20 std::format)
+    template<typename... Args>
+    void trace_fmt(std::format_string<Args...> fmt, Args&&... args) {
+        if (is_enabled(LogLevel::Trace)) {
+            trace(std::vformat(fmt.get(), std::make_format_args(args...)));
+        }
+    }
+
+    template<typename... Args>
+    void debug_fmt(std::format_string<Args...> fmt, Args&&... args) {
+        if (is_enabled(LogLevel::Debug)) {
+            debug(std::vformat(fmt.get(), std::make_format_args(args...)));
+        }
+    }
+
+    template<typename... Args>
+    void info_fmt(std::format_string<Args...> fmt, Args&&... args) {
+        if (is_enabled(LogLevel::Info)) {
+            info(std::vformat(fmt.get(), std::make_format_args(args...)));
+        }
+    }
+
+    template<typename... Args>
+    void warn_fmt(std::format_string<Args...> fmt, Args&&... args) {
+        if (is_enabled(LogLevel::Warn)) {
+            warn(std::vformat(fmt.get(), std::make_format_args(args...)));
+        }
+    }
+
+    template<typename... Args>
+    void error_fmt(std::format_string<Args...> fmt, Args&&... args) {
+        if (is_enabled(LogLevel::Error)) {
+            error(std::vformat(fmt.get(), std::make_format_args(args...)));
+        }
+    }
+
+    template<typename... Args>
+    void fatal_fmt(std::format_string<Args...> fmt, Args&&... args) {
+        if (is_enabled(LogLevel::Fatal)) {
+            fatal(std::vformat(fmt.get(), std::make_format_args(args...)));
+        }
+    }
+
     // Configuration
     void set_level(LogLevel level) { m_level = level; }
     [[nodiscard]] LogLevel level() const { return m_level; }
@@ -182,6 +226,14 @@ void flush();
 #define LITHIUM_LOG_WARN(msg)  ::lithium::logging::default_logger().warn(msg)
 #define LITHIUM_LOG_ERROR(msg) ::lithium::logging::default_logger().error(msg)
 #define LITHIUM_LOG_FATAL(msg) ::lithium::logging::default_logger().fatal(msg)
+
+// Format-style logging macros (support format strings and arguments)
+#define LITHIUM_LOG_TRACE_FMT(fmt, ...) ::lithium::logging::default_logger().trace_fmt(fmt, ##__VA_ARGS__)
+#define LITHIUM_LOG_DEBUG_FMT(fmt, ...) ::lithium::logging::default_logger().debug_fmt(fmt, ##__VA_ARGS__)
+#define LITHIUM_LOG_INFO_FMT(fmt, ...)  ::lithium::logging::default_logger().info_fmt(fmt, ##__VA_ARGS__)
+#define LITHIUM_LOG_WARN_FMT(fmt, ...)  ::lithium::logging::default_logger().warn_fmt(fmt, ##__VA_ARGS__)
+#define LITHIUM_LOG_ERROR_FMT(fmt, ...) ::lithium::logging::default_logger().error_fmt(fmt, ##__VA_ARGS__)
+#define LITHIUM_LOG_FATAL_FMT(fmt, ...) ::lithium::logging::default_logger().fatal_fmt(fmt, ##__VA_ARGS__)
 
 // Debug-only logging
 #ifdef NDEBUG

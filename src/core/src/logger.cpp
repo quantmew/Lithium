@@ -226,13 +226,23 @@ void init(std::vector<std::unique_ptr<LogSink>> sinks) {
 
 void shutdown() {
     auto& s = state();
-    std::lock_guard lock(s.mutex);
 
-    flush();
-    s.sinks.clear();
-    s.loggers.clear();
-    s.default_logger.reset();
-    s.initialized = false;
+    // First flush sinks (need to do this before clearing)
+    {
+        std::lock_guard lock(s.mutex);
+        for (auto& sink : s.sinks) {
+            sink->flush();
+        }
+    }
+
+    // Then clear everything (don't need lock for destruction)
+    {
+        std::lock_guard lock(s.mutex);
+        s.sinks.clear();
+        s.loggers.clear();
+        s.default_logger.reset();
+        s.initialized = false;
+    }
 }
 
 void add_sink(std::unique_ptr<LogSink> sink) {

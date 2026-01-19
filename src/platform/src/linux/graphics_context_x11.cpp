@@ -150,6 +150,14 @@ public:
         }
     }
 
+    void draw_textured_rect(const RectF& dest, unsigned int texture_id, const RectF& src) override {
+        // Software renderer doesn't support texture_id (OpenGL textures)
+        // This would require a texture cache system, for now just draw a placeholder
+        (void)texture_id;
+        (void)src;
+        fill_rect(dest, {255, 255, 255, 128});  // Draw semi-transparent white as placeholder
+    }
+
     void push_clip(const RectF& rect) override {
         RectI int_rect = {
             static_cast<i32>(rect.x + m_transform_x),

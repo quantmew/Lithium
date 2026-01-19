@@ -43,6 +43,9 @@ public:
 
     virtual void draw_line(const PointF& from, const PointF& to, const Color& color, f32 width) = 0;
 
+    // Textured rectangle (for text rendering)
+    virtual void draw_textured_rect(const RectF& dest, unsigned int texture_id, const RectF& src) = 0;
+
     // Text drawing (basic - full text rendering is in text module)
     virtual void draw_text(const PointF& position, const String& text, const Color& color, f32 size) = 0;
 

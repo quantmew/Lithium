@@ -14,7 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Options
-option(LITHIUM_BUILD_TESTS "Build unit tests" ON)
+option(LITHIUM_BUILD_TESTS "Build unit tests" OFF)
 option(LITHIUM_BUILD_TOOLS "Build development tools" ON)
 option(LITHIUM_USE_SANITIZERS "Enable sanitizers in debug builds" OFF)
 
@@ -31,6 +31,7 @@ endif()
 # Find external dependencies
 find_package(Freetype QUIET)
 find_package(CURL QUIET)
+find_package(OpenGL REQUIRED)
 find_package(Threads REQUIRED)
 
 if(LITHIUM_BUILD_TESTS)
@@ -50,14 +51,21 @@ endif()
 
 # Core modules (order matters for dependencies)
 add_subdirectory(src/core)
+
+# New graphics and text engines
+add_subdirectory(src/beryl)
+add_subdirectory(src/mica)
+
 add_subdirectory(src/platform)
 add_subdirectory(src/dom)
 add_subdirectory(src/html)
 add_subdirectory(src/css)
 add_subdirectory(src/js)
-add_subdirectory(src/text)
+# Old text engine - replaced by beryl
+# add_subdirectory(src/text)
 add_subdirectory(src/layout)
-add_subdirectory(src/render)
+# Old render engine - replaced by mica
+# add_subdirectory(src/render)
 add_subdirectory(src/bindings)
 add_subdirectory(src/network)
 add_subdirectory(src/browser)

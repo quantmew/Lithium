@@ -8,7 +8,7 @@ set(PLATFORM_SOURCES
 
 # Graphics backend options
 option(LITHIUM_ENABLE_OPENGL "Enable OpenGL backend" ON)
-option(LITHIUM_ENABLE_DIRECT2D "Enable Direct2D backend (Windows only)" ON)
+option(LITHIUM_ENABLE_DIRECT2D "Enable Direct2D backend (Windows only)" OFF)
 
 # Platform-specific sources
 if(WIN32)
@@ -22,7 +22,6 @@ if(WIN32)
         list(APPEND PLATFORM_SOURCES
             src/direct2d/d2d_graphics_context.cpp
             src/direct2d/d2d_render_state.cpp
-            src/direct2d/d2d_text_renderer.cpp
             src/direct2d/d2d_texture_cache.cpp
         )
         set(HAS_DIRECT2D TRUE)
@@ -31,7 +30,6 @@ if(WIN32)
     # OpenGL backend
     if(LITHIUM_ENABLE_OPENGL)
         list(APPEND PLATFORM_SOURCES
-            src/opengl/opengl_graphics_context.cpp
             src/opengl/opengl_shader_manager.cpp
             src/opengl/opengl_render_state.cpp
             src/opengl/opengl_texture_cache.cpp
@@ -50,7 +48,6 @@ elseif(APPLE)
     # OpenGL backend for macOS
     if(LITHIUM_ENABLE_OPENGL)
         list(APPEND PLATFORM_SOURCES
-            src/opengl/opengl_graphics_context.cpp
             src/opengl/opengl_shader_manager.cpp
             src/opengl/opengl_render_state.cpp
             src/opengl/opengl_texture_cache.cpp
@@ -69,7 +66,6 @@ elseif(UNIX)
     # OpenGL backend for Linux
     if(LITHIUM_ENABLE_OPENGL)
         list(APPEND PLATFORM_SOURCES
-            src/opengl/opengl_graphics_context.cpp
             src/opengl/opengl_shader_manager.cpp
             src/opengl/opengl_render_state.cpp
             src/opengl/opengl_texture_cache.cpp
@@ -140,6 +136,8 @@ if(WIN32)
         )
     endif()
 
+    # Note: Text rendering is now handled by the beryl module (DirectWrite backend)
+
 elseif(APPLE)
     find_library(COCOA_LIBRARY Cocoa REQUIRED)
     find_library(QUARTZ_LIBRARY QuartzCore REQUIRED)
@@ -179,13 +177,5 @@ elseif(UNIX)
         )
     endif()
 
-    # FreeType for text rendering on Linux
-    find_package(Freetype REQUIRED)
-    target_link_libraries(lithium_platform PRIVATE
-        Freetype::Freetype
-    )
-    target_include_directories(lithium_platform PRIVATE
-        ${FREETYPE_INCLUDE_DIRS}
-    )
-    target_compile_definitions(lithium_platform PRIVATE LITHIUM_HAS_FREETYPE)
+    # Note: Text rendering is now handled by the beryl module (FreeType backend)
 endif()

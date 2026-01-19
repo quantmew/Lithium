@@ -57,7 +57,8 @@ public:
     using ErrorType = E;
 
     // Constructors
-    Result(T value) : m_data(std::move(value)) {}
+    template<typename U = T>
+    Result(U&& value) : m_data(std::forward<U>(value)) {}
     Result(Error<E> error) : m_data(std::move(error.value)) {}
 
     // Check state

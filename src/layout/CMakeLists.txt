@@ -15,5 +15,5 @@ lithium_add_module(layout
         lithium_core
         lithium_dom
         lithium_css
-        lithium_text
+        lithium_beryl
 )
